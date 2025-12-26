@@ -12,6 +12,26 @@ import { validateDistribution, getDistributionConfig, calculatePercentage } from
 const MAX_RETRIES = 3;
 
 /**
+ * Extrahiert Klassenstufe aus className String
+ * BUG1 Fix: Dynamisches gradeLevel aus className
+ * @param className - Klassenname wie "10a", "11b", "Klasse 12"
+ * @returns Klassenstufe (1-13) oder 10 als Fallback
+ */
+export function extractGradeLevelFromClassName(className: string | undefined): number {
+  if (!className) return 10; // Fallback: SEK I
+  
+  const match = className.match(/(\d{1,2})/);
+  if (match && match[1]) {
+    const parsed = parseInt(match[1], 10);
+    if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= 13) {
+      return parsed;
+    }
+  }
+  
+  return 10; // Fallback
+}
+
+/**
  * Berechnet geschätzte Kosten basierend auf Token-Usage
  */
 function calculateCost(
@@ -45,7 +65,12 @@ export async function performMasterAnalysis(
   const openai = getOpenAIClient();
   
   const prompt = buildMasterAnalysisPrompt(input);
-  const systemPrompt = `${MASTER_ANALYSIS_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_ENFORCEMENT}`;
+  const strictPointsInstruction = `\n\nKRITISCH - PUNKTEVERGABE:
+- PUNKTE MÜSSEN AUSSCHLIESSLICH AUS DEM ERWARTUNGSHORIZONT EXTRAHIERT WERDEN
+- KEINE TEILPUNKTE ERFINDEN ODER "GROSSZÜGIG" BEWERTEN
+- KEINE PUNKTE VERGEBEN, DIE NICHT IM ERWARTUNGSHORIZONT STEHEN
+- JEDE PUNKTVERGABE MUSS SICH DIREKT AUS DEM ERWARTUNGSHORIZONT ABLEITEN LASSEN`;
+  const systemPrompt = `${MASTER_ANALYSIS_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_ENFORCEMENT}${strictPointsInstruction}`;
 
   let lastError: Error | null = null;
 
@@ -63,7 +88,8 @@ export async function performMasterAnalysis(
             content: prompt,
           },
         ],
-        temperature: 0.3,
+        temperature: 0.0, // BUG4 Fix: Deterministisch für konsistente Bewertungen
+        top_p: 0.1, // BUG4 Fix: Zusätzliche Deterministik
         response_format: { type: 'json_object' },
         max_tokens: 16384, // Erhöhtes Token-Limit für vollständige Analysen
       });
@@ -170,10 +196,20 @@ export async function performMasterAnalysis(
           // Berechne Note basierend auf KORREKTEN Punkten (aus Einzelaufgaben berechnet)
           if (!normalized.meta.grade && normalized.meta.maxPoints > 0) {
             const percentage = (normalized.meta.achievedPoints / normalized.meta.maxPoints) * 100;
-            // Fallback: Verwende SEK I (gradeLevel 10) wenn nicht verfügbar
-            const gradeLevel = 10; // TODO: Sollte aus meta kommen, falls verfügbar
+            // Versuche, aus input.className eine Klassenstufe zu extrahieren, z.B. "10a" -> 10
+            const gradeLevel = extractGradeLevelFromClassName(input.className);
             const gradeInfo = getGradeInfo({ prozent: percentage, gradeLevel });
             normalized.meta.grade = gradeInfo.label;
+            
+            // Logging für Punkteberechnung (BUG1+4 Debug)
+            console.log('[Grade Calculation]', {
+              achievedPoints: normalized.meta.achievedPoints,
+              maxPoints: normalized.meta.maxPoints,
+              percentage: percentage.toFixed(2) + '%',
+              gradeLevel,
+              grade: gradeInfo.label,
+              className: input.className || 'N/A',
+            });
             if (!normalized.meta.performanceLevel) {
               normalized.meta.performanceLevel = getPerformanceLevel(percentage);
             }

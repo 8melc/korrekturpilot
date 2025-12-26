@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: '2025-11-17.clover',
+      apiVersion: '2025-12-15.clover',
     })
 
     // Stripe Customer ID Sync: Prüfe ob User bereits eine Stripe Customer ID hat

@@ -118,7 +118,7 @@ export function normalizeAnalysis(analysis: any): UniversalAnalysis {
   // Berechne Prozentsatz
   const percentage = maxPoints > 0 ? (achievedPoints / maxPoints) * 100 : 0;
 
-  return {
+  const normalized: UniversalAnalysis = {
     meta: {
       studentName: analysis.meta?.studentName || '',
       class: analysis.meta?.class || '',
@@ -144,4 +144,55 @@ export function normalizeAnalysis(analysis: any): UniversalAnalysis {
         : [],
     },
   };
+  
+  return validateFeedbackOverlap(normalized); // BUG3 Fix: Overlap-Check
+}
+
+/**
+ * Validiert und entfernt inhaltliche Overlaps zwischen strengths und nextSteps
+ * BUG3 Fix: Verhindert widersprüchliche Feedback-Items
+ */
+export function validateFeedbackOverlap(normalized: UniversalAnalysis): UniversalAnalysis {
+  const strengths = normalized.strengths || [];
+  const nextSteps = normalized.nextSteps || [];
+  
+  // Prüfe inhaltlichen Overlap (gleiche Keywords/Aufgaben)
+  const overlappingNextSteps: string[] = [];
+  
+  strengths.forEach((strength: string) => {
+    const strengthLower = strength.toLowerCase();
+    // Extrahiere Substantive/Nomen (Wörter > 4 Zeichen, die nicht Stop-Wörter sind)
+    const stopWords = ['du', 'hast', 'die', 'der', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einen', 'einem', 'eines', 'kannst', 'solltest', 'sollst', 'musst', 'wirst'];
+    const strengthWords = strengthLower
+      .split(/\s+/)
+      .filter(w => w.length > 4 && !stopWords.includes(w))
+      .map(w => w.replace(/[.,!?;:]/g, '')); // Entferne Satzzeichen
+    
+    nextSteps.forEach((step: string) => {
+      const stepLower = step.toLowerCase();
+      const stepWords = stepLower
+        .split(/\s+/)
+        .filter(w => w.length > 4 && !stopWords.includes(w))
+        .map(w => w.replace(/[.,!?;:]/g, ''));
+      
+      // Prüfe ob gemeinsame Schlüsselwörter vorhanden sind (exakte Übereinstimmung oder Teilwort)
+      const hasOverlap = strengthWords.some(word => 
+        stepWords.some(stepWord => 
+          stepWord === word || stepWord.includes(word) || word.includes(stepWord)
+        )
+      );
+      
+      if (hasOverlap && !overlappingNextSteps.includes(step)) {
+        overlappingNextSteps.push(step);
+      }
+    });
+  });
+  
+  if (overlappingNextSteps.length > 0) {
+    console.warn('🔥 FEEDBACK OVERLAP gefunden:', overlappingNextSteps);
+    // Entferne Overlap aus nextSteps (priorisiere strengths)
+    normalized.nextSteps = nextSteps.filter(step => !overlappingNextSteps.includes(step));
+  }
+  
+  return normalized;
 }

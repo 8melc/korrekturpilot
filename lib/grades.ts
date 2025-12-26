@@ -45,6 +45,7 @@ function getGradeInfoSEKI(prozent: number): string {
   if (prozent >= 39) return "4−";
   
   if (prozent >= 33) return "5+";
+  if (prozent >= 29) return "5−";  // BUG2 Fix: 29-32% = 5-
   if (prozent >= 26) return "5";
   if (prozent >= 19) return "5−";
   
