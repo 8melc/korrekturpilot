@@ -28,8 +28,8 @@ export function useCorrections() {
         course_school_year,
         status,
         analysis,
-        file_url,
-        expectation_url
+        file_key,
+        expectation_key
       `)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
@@ -61,12 +61,12 @@ export function useCorrections() {
         className: row.course_class_name ?? '–',
         schoolYear: row.course_school_year ?? 'Nicht angegeben',
       },
-      // NEU: URLs aus DB
-      fileUrl: row.file_url,
-      expectationUrl: row.expectation_url,
+      // NEU: Keys aus DB
+      fileUrl: row.file_key,
+      expectationUrl: row.expectation_key,
       // Kompatibilität zu DetailDrawer/PDFViewer
-      klausurFileKey: row.file_url,
-      expectationFileKey: row.expectation_url,
+      klausurFileKey: row.file_key,
+      expectationFileKey: row.expectation_key,
     }));
 
     setResults(mapped);

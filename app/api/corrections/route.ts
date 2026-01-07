@@ -83,8 +83,8 @@ export async function POST(request: NextRequest) {
               course_school_year: body.course.schoolYear,
               status: mapStatusToDb(body.status),
               analysis: body.analysis ?? null,
-              file_url: body.fileUrl ?? null,
-              expectation_url: body.expectationUrl ?? null,
+              file_key: body.fileUrl ?? null,
+              expectation_key: body.expectationUrl ?? null,
               updated_at: new Date().toISOString(),
             })
             .eq('id', body.id)
@@ -113,8 +113,8 @@ export async function POST(request: NextRequest) {
             course_school_year: body.course.schoolYear,
             status: mapStatusToDb(body.status),
             analysis: body.analysis ?? null,
-            file_url: body.fileUrl ?? null,
-            expectation_url: body.expectationUrl ?? null,
+            file_key: body.fileUrl ?? null,
+            expectation_key: body.expectationUrl ?? null,
           });
         },
         supabase
