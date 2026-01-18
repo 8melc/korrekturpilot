@@ -2,24 +2,42 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Wichtig: Service Role Key, nicht anon key!
-);
-
 export async function POST(req: Request) {
+  // Prüfe ENV-Variablen zur Laufzeit (nicht beim Import!)
+  if (!process.env.STRIPE_SECRET_KEY) {
+    console.error('❌ STRIPE_SECRET_KEY fehlt');
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    console.error('❌ STRIPE_WEBHOOK_SECRET fehlt');
+    return NextResponse.json({ error: 'Webhook misconfigured' }, { status: 500 });
+  }
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('❌ Supabase ENV-Variablen fehlen');
+    return NextResponse.json({ error: 'Database misconfigured' }, { status: 500 });
+  }
+
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
   const body = await req.text();
-  const sig = req.headers.get('stripe-signature')!;
+  const sig = req.headers.get('stripe-signature');
   
+  if (!sig) {
+    console.error('❌ stripe-signature Header fehlt');
+    return NextResponse.json({ error: 'Missing signature' }, { status: 400 });
+  }
+
   let event: Stripe.Event;
 
   try {
     event = stripe.webhooks.constructEvent(
       body,
       sig,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err: any) {
     console.error('❌ Webhook signature verification failed:', err.message);
@@ -66,7 +84,7 @@ export async function POST(req: Request) {
         .from('users')
         .insert([{ 
           id: userId, 
-          credits: 1  // 1 Free Credit beim Erstellen
+          credits: 5  // 5 Free Credit beim Erstellen
         }])
         .select()
         .single();

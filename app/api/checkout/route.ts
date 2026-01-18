@@ -40,20 +40,20 @@ export async function POST(req: Request) {
     }
 
     // Prüfe ob Price ID konfiguriert ist
-    const priceId = process.env.STRIPE_PRICE_ID
+    // Unterstützt beide ENV-Namen für Kompatibilität
+    const priceId = process.env.STRIPE_PRICE_ID || process.env.NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25
     if (!priceId) {
       if (process.env.NODE_ENV === 'development') {
-        console.error('STRIPE_PRICE_ID ist nicht konfiguriert')
+        console.error('STRIPE_PRICE_ID oder NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25 ist nicht konfiguriert')
       }
       return NextResponse.json(
-        { error: 'Server-Konfigurationsfehler' },
+        { error: 'Server-Konfigurationsfehler: Stripe Price ID fehlt' },
         { status: 500 }
       )
     }
 
-    // Origin aus Request-Header extrahieren (für success/cancel URLs)
-    const origin = req.headers.get('origin') || 
-      process.env.NEXT_PUBLIC_URL || 
+    // Base URL für success/cancel URLs
+    const baseUrl = process.env.NEXT_PUBLIC_URL || 
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -94,14 +94,19 @@ export async function POST(req: Request) {
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
+      customer: customerId, // WICHTIG: Verknüpfe Session mit bestehendem Customer
       line_items: [
         {
-          price: process.env.STRIPE_PRICE_ID!, // nutzt deine ENV-Price-ID
+          price: priceId, // nutzt deine ENV-Price-ID (STRIPE_PRICE_ID oder NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25)
           quantity: 1,
         },
       ],
-      success_url: `${process.env.NEXT_PUBLIC_URL}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_URL}/checkout/cancel`,
+      success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/checkout/cancel`,
+      metadata: {
+        userId: user.id, // KRITISCH: Für Webhook, damit Credits zugewiesen werden können!
+        type: 'CREDITS_25',
+      },
     })
 
     // WICHTIG: URL für das Frontend zurückgeben

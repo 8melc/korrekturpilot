@@ -76,7 +76,7 @@ export default function Home() {
                 Beta-Angebot: 25 Klausuren für 7,90 € einmalig – Jetzt sichern!
               </span>
             </div>
-            <h1 className="hero-title font-extrabold">Mehr Zeit für Unterricht, weniger Zeit am Schreibtisch.</h1>
+            <h1 className="hero-title font-extrabold">Weniger Zeit am Schreibtisch. Mehr Zeit für Unterricht.</h1>
             <p className="hero-subtitle text-blue-100">
               KorrekturPilot unterstützt dich bei der Fleißarbeit: Deine handschriftlichen Klausuren werden analysiert, mit deinem Erwartungshorizont abgeglichen und in fertiges Schülerfeedback verwandelt. Du behältst die volle Kontrolle.
             </p>

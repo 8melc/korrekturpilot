@@ -83,8 +83,8 @@ export async function POST(request: NextRequest) {
               course_school_year: body.course.schoolYear,
               status: mapStatusToDb(body.status),
               analysis: body.analysis ?? null,
-              file_key: body.fileUrl ?? null,
-              expectation_key: body.expectationUrl ?? null,
+              file_url: body.fileUrl ?? null,
+              expectation_url: body.expectationUrl ?? null,
               updated_at: new Date().toISOString(),
             })
             .eq('id', body.id)
@@ -113,8 +113,8 @@ export async function POST(request: NextRequest) {
             course_school_year: body.course.schoolYear,
             status: mapStatusToDb(body.status),
             analysis: body.analysis ?? null,
-            file_key: body.fileUrl ?? null,
-            expectation_key: body.expectationUrl ?? null,
+            file_url: body.fileUrl ?? null,
+            expectation_url: body.expectationUrl ?? null,
           });
         },
         supabase
@@ -181,10 +181,14 @@ export async function DELETE(request: NextRequest) {
     if (error) {
       console.error('DELETE /api/corrections single delete error', error);
       return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
-    }    const deletedCount = data?.length ?? 0;
+    }
+
+    const deletedCount = data?.length ?? 0;
     if (deletedCount === 0) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }    return NextResponse.json({ success: true, deletedCount });
+    }
+
+    return NextResponse.json({ success: true, deletedCount });
   } catch (error: any) {
     console.error('Error deleting correction(s):', error);
     return NextResponse.json(
