@@ -106,7 +106,22 @@ Wahrscheinlich hat entweder die PDF-Textextraktion still versagt (kein Fehler an
 
 ---
 
-## E) Deployment / Infrastruktur
+## F) Business / Organisatorisches
+
+### F1. Firmenname / Branding
+**Von:** Maximilian Gröning (20.01.2026)
+**Vorschlag:** "AI-DUCATION INTELLIGENCE GmbH" mit Logo-Entwurf
+**Handlungsbedarf:**
+- [ ] Entscheidung: Bleibt es bei "KorrekturPilot" oder wird umfirmiert?
+- [ ] Falls neuer Name: Domain, Branding, App-Titel anpassen
+
+### F2. Vergütung / Finanzen
+- [ ] Vergütungsmodell klären (Stundenbasis? Pauschal? Beteiligung?)
+- [ ] Rechnungsstellung / Vertrag
+
+---
+
+## G) Deployment / Infrastruktur
 
 - [ ] CI/CD Pipeline einrichten (aktuell keine GitHub Actions)
 - [ ] Auth-Schutz für Production aktivieren (aktuell Dev-Modus)
