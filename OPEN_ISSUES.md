@@ -121,6 +121,35 @@ Wahrscheinlich hat entweder die PDF-Textextraktion still versagt (kein Fehler an
 
 ---
 
+## E) Security & Compliance (aus Notion-Board)
+
+### Sprint 1 - MUST HAVE
+| # | Feature | Aufwand (h) | Priorität |
+|---|---------|-------------|-----------|
+| E1 | Security Headers (HSTS, CSP, XSS Protection, X-Frame-Options etc.) in next.config.js | 3 | Must have |
+| E2 | Dependency-Audit (npm audit, Schwachstellen beheben, regelmäßige Updates) | 2 | Must have |
+
+### Sprint 2 - SHOULD HAVE
+| # | Feature | Aufwand (h) | Priorität |
+|---|---------|-------------|-----------|
+| E3 | Input-Validierung PDF-Uploads serverseitig (Dateigröße, MIME-Type, Upload-Limit pro User) | 4 | Should have |
+| E4 | Rate Limiting (Login Brute-Force-Schutz, API-Anfragen, PDF-Upload DoS-Schutz) | 5 | Should have |
+| E5 | CSRF-Protection prüfen/aktivieren (Tokens bei Uploads, Zahlungen) | 4 | Should have |
+| E6 | Impressum/Datenschutz vollständig prüfen (Links vorhanden, Inhalte checken) | 2 | Should have |
+
+### Sprint 3 - COULD HAVE / NICE TO HAVE
+| # | Feature | Aufwand (h) | Priorität |
+|---|---------|-------------|-----------|
+| E7 | Cookie-Consent implementieren (DSGVO-konformer Banner) | 3 | Could have |
+| E8 | Malware-Scanning für Uploads | 6 | Could have |
+| E9 | AVV-Vorlage für Schulen (Auftragsverarbeitungsvertrag) | 8 | Could have |
+| E10 | Error-Messages optimieren (Info-Leakage vermeiden) | 2 | Nice to have |
+| E11 | Backup-Strategie dokumentieren | 4 | Nice to have |
+| E12 | Incident-Response-Plan dokumentieren | 6 | Nice to have |
+| E13 | Penetration Test (OWASP ZAP o.ä.) | 12 | Nice to have |
+
+---
+
 ## G) Deployment / Infrastruktur
 
 - [ ] CI/CD Pipeline einrichten (aktuell keine GitHub Actions)
@@ -140,8 +169,13 @@ Wahrscheinlich hat entweder die PDF-Textextraktion still versagt (kein Fehler an
 **Nächste Woche (ab KW 12):**
 5. B1 - Memory Leak fixen
 6. B2 - Credit-Verlust Problem lösen
-7. C1+C2 - Frontend-Validierung + Doppelklick-Schutz
-8. A3 - Datenschutzerklärung überarbeiten
+7. E1+E2 - Security Headers + Dependency Audit (Must haves)
+8. C1+C2 - Frontend-Validierung + Doppelklick-Schutz
+
+**Sprint 2 (KW 13-14):**
+9. E3-E6 - Security Should-haves (Input-Validierung, Rate Limiting, CSRF, Datenschutz)
+10. A3 - Datenschutzerklärung überarbeiten
 
 **Danach:**
-9. Phase 2 Features nach Priorisierung
+11. Phase 2 Features (D1-D5) nach Priorisierung
+12. Security Nice-to-haves (E7-E13)
