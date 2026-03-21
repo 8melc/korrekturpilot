@@ -82,13 +82,13 @@ export async function POST(request: NextRequest) {
       const fileName = fileKey.split('/').pop() || fileKey;
       console.warn(`[${fileKey}] Kein Text extrahiert - PDF könnte leer oder nicht lesbar sein`);
       return NextResponse.json(
-        { 
+        {
           error: 'Kein Text aus PDF extrahiert. Die Datei könnte leer, beschädigt oder nicht lesbar sein.',
           text: '',
           filename: fileName,
           size: uint8.length,
         },
-        { status: 200 } // 200 weil die Extraktion technisch erfolgreich war, nur leer
+        { status: 422 }
       );
     }
 

@@ -238,10 +238,21 @@ export default function CorrectionPage() {
         body: JSON.stringify({ fileKey })
       })
       const extracted = await extractResponse.json()
+
+      if (!extractResponse.ok || extracted.error) {
+        toast.error(extracted.error || 'Fehler bei der Textextraktion des Erwartungshorizonts.')
+        return
+      }
+
+      if (!extracted.text || extracted.text.trim().length < 10) {
+        toast.error('Der extrahierte Text ist zu kurz. Bitte lade eine lesbare PDF-Datei hoch.')
+        return
+      }
+
       setExpectationText(extracted.text)
       toast.success('Erwartungshorizont erfolgreich hochgeladen!')
     } catch (error) {
-      toast.error('Fehler beim Hochladen des Erwartungshorizonts')
+      toast.error('Fehler beim Hochladen des Erwartungshorizonts. Bitte prüfe deine Internetverbindung und versuche es erneut.')
     }
   }
 
