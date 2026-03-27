@@ -11,7 +11,7 @@ Leere Arrays sind erlaubt, fehlende nicht:
 
 - tasks[*].taskId
 - tasks[*].taskTitle
-- tasks[*].points
+- tasks[*].points (MUSS im Format "X/Y" sein, z.B. "3/5", "0/4", "8/10")
 - tasks[*].whatIsCorrect
 - tasks[*].whatIsWrong
 - tasks[*].improvementTips

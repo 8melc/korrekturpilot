@@ -31,7 +31,7 @@ Erzeuge ein vollständiges Analyseobjekt im folgenden JSON-Schema:
     {
       "taskId": "",
       "taskTitle": "",
-      "points": "",
+      "points": "erreichtePunkte/maxPunkte",
       "whatIsCorrect": [],
       "whatIsWrong": [],
       "improvementTips": [],
@@ -52,6 +52,7 @@ Erzeuge ein vollständiges Analyseobjekt im folgenden JSON-Schema:
 
 REGELN:
 - Die JSON-Struktur darf NICHT verändert werden.
+- **KRITISCH: Das Feld "points" MUSS IMMER im Format "X/Y" sein (erreichte Punkte / maximale Punkte), z.B. "3/5", "0/4", "8/10". NIEMALS nur eine Zahl wie "3" verwenden!**
 - **KRITISCH: Analysiere JEDE EINZELNE Aufgabe aus dem Erwartungshorizont. KEINE Aufgabe darf fehlen!**
 - Wenn der Erwartungshorizont Aufgaben 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4 enthält, MUSS deine Analyse auch ALLE diese Aufgaben enthalten.
 - Zähle die Aufgaben im Erwartungshorizont und stelle sicher, dass deine Response GENAU SO VIELE Aufgaben enthält.
@@ -187,6 +188,7 @@ VERBINDLICHE REGELN:
 2. **KRITISCH: Analysiere JEDE EINZELNE Aufgabe aus dem Erwartungshorizont. KEINE Aufgabe darf fehlen!**
 3. Zähle die Aufgaben im Erwartungshorizont und stelle sicher, dass deine Response GENAU SO VIELE Aufgaben enthält
 4. Verwende die universelle JSON-Struktur exakt wie vorgegeben
+5. **KRITISCH: "points" MUSS IMMER im Format "X/Y" sein (z.B. "3/5", "0/4"). NIEMALS nur eine Zahl!**
 5. Alle Textfelder müssen vollständige Sätze enthalten
 6. Passe den Detailgrad an die erreichte Punktzahl an
 7. Erfinde keine Inhalte - nur was aus Erwartungshorizont und Schülerantwort ableitbar ist
