@@ -70,10 +70,11 @@ export function validateAnalysisOutput(
     return { valid: false, errors };
   }
 
-  // 1. Task-Count prüfen
+  // 1. Task-Count prüfen (nur Warnung, kein harter Fehler)
+  // GPT-4o erkennt die Aufgabenstruktur oft besser als die Regex-basierte Extraktion
   if (output.tasks.length !== expectedTaskCount) {
-    errors.push(
-      `Task count mismatch: expected ${expectedTaskCount}, got ${output.tasks.length}`
+    console.warn(
+      `[Konsistenz] Task count Warnung: expected ${expectedTaskCount}, got ${output.tasks.length} (wird akzeptiert)`
     );
   }
 

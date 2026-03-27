@@ -17,6 +17,7 @@ import {
   validateAnalysisOutput,
   extractExpectedTaskCount,
 } from "@/lib/consistency";
+import { mapToKlausurAnalyse } from "@/lib/analysis/mapper";
 
 // Konstanten für Konsistenz
 const MAX_VALIDATION_RETRIES = 3;
@@ -503,8 +504,11 @@ export async function POST(request: NextRequest) {
     const remainingCredits =
       !updatedError && updatedUser ? updatedUser.credits : userData.credits;
 
+    // Mappe UniversalAnalysis → KlausurAnalyse für die UI-Kompatibilität
+    const klausurAnalyse = mapToKlausurAnalyse(analysis);
+
     return NextResponse.json({
-      ...analysis,
+      ...klausurAnalyse,
       credits: remainingCredits,
       creditUsed: creditDeducted,
       _consistency: {

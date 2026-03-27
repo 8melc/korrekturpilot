@@ -86,3 +86,47 @@ function parseImprovementTips(block: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * Mappt UniversalAnalysis zurück zu KlausurAnalyse
+ * Damit die bestehende UI (ResultCompactView, Renderer etc.) funktioniert
+ */
+export function mapToKlausurAnalyse(analysis: UniversalAnalysis): KlausurAnalyse {
+  const maxPoints = analysis.meta?.maxPoints ?? 0;
+  const achievedPoints = analysis.meta?.achievedPoints ?? 0;
+  const prozent = maxPoints > 0 ? Math.round((achievedPoints / maxPoints) * 100) : 0;
+
+  return {
+    gesamtpunkte: maxPoints,
+    erreichtePunkte: achievedPoints,
+    prozent,
+    aufgaben: (analysis.tasks || []).map((task) => {
+      const pointsMatch = task.points?.match(/^(\d+)\/(\d+)$/);
+      const erreicht = pointsMatch ? parseInt(pointsMatch[1], 10) : 0;
+      const max = pointsMatch ? parseInt(pointsMatch[2], 10) : 0;
+
+      // Baue Kommentar aus den einzelnen Feldern zusammen
+      const parts: string[] = [];
+      if (task.whatIsCorrect?.length) {
+        parts.push('DAS WAR RICHTIG:\n' + task.whatIsCorrect.map(s => `• ${s}`).join('\n'));
+      }
+      if (task.whatIsWrong?.length) {
+        parts.push('HIER GAB ES ABZÜGE:\n' + task.whatIsWrong.map(s => `• ${s}`).join('\n'));
+      }
+      if (task.improvementTips?.length) {
+        parts.push('VERBESSERUNGSTIPP:\n' + task.improvementTips.map(s => `• ${s}`).join('\n'));
+      }
+
+      return {
+        aufgabe: task.taskTitle || task.taskId || '',
+        maxPunkte: max,
+        erreichtePunkte: erreicht,
+        kommentar: parts.join('\n\n') || task.studentAnswerSummary || '',
+        korrekturen: task.teacherCorrections || [],
+      };
+    }),
+    zusammenfassung: analysis.teacherConclusion?.summary || '',
+    // Preserve universal fields for components that can use them
+    ...analysis,
+  };
+}
+
