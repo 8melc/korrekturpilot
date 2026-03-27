@@ -49,7 +49,13 @@ Wenn du IRGENDEINE Struktur erkennst, beschreibe sie detailliert:
 
 Beschreibe auch unleserliche Strukturen, wenn du die Grundform erkennst.
 
-Gib nur den reinen Text zurück, aber beschreibe ALLE Zeichnungen und Strukturen die du siehst.`
+⚠️ WICHTIG FÜR BESCHRIFTETE DIAGRAMME:
+Wenn das Dokument ein beschriftetes Diagramm enthält (z.B. Bodenprofil, Kreislauf, Aufbau eines Organs):
+- Extrahiere ALLE Beschriftungen als strukturierte Liste
+- Beispiel Bodenprofil: "Schicht 1 (oben): Oberboden/Humus, Schicht 2: Unterboden, Schicht 3: Ausgangsgestein"
+- Beschreibe auch Pfeile, Linien oder Zuordnungen zwischen Elementen
+
+Gib nur den reinen Text zurück, aber beschreibe ALLE Zeichnungen, Strukturen und Diagramme die du siehst.`
     ]);
 
     const text = result.response.text();

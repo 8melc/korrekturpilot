@@ -147,10 +147,15 @@ async function performConsistentAnalysis(
         );
         lastValidationErrors = schemaValidation.errors;
 
-        if (attempt < MAX_VALIDATION_RETRIES - 1) {
-          continue; // Retry
+        // Nur retrien wenn die Fehler behebbar sind (z.B. fehlende Felder)
+        // Nicht retrien bei strukturellen Problemen die GPT-4o mit gleichem Prompt nicht lösen wird
+        const isRetriable = schemaValidation.errors.some(e =>
+          e.includes('fehlt') || e.includes('muss ein Array sein')
+        );
+        if (isRetriable && attempt < MAX_VALIDATION_RETRIES - 1) {
+          continue;
         }
-        // Letzter Versuch: Normalisiere trotzdem
+        // Nicht-behebbare Fehler oder letzter Versuch: Normalisiere trotzdem
       }
 
       // Konsistenz-Validierung (Punkte, Evidence)
@@ -165,8 +170,12 @@ async function performConsistentAnalysis(
           ...consistencyValidation.errors,
         ];
 
-        if (attempt < MAX_VALIDATION_RETRIES - 1) {
-          continue; // Retry
+        // Points-Format-Fehler sind behebbar, andere nicht
+        const hasRetriableErrors = consistencyValidation.errors.some(e =>
+          e.includes('Invalid points format') || e.includes('Missing')
+        );
+        if (hasRetriableErrors && attempt < MAX_VALIDATION_RETRIES - 1) {
+          continue;
         }
         // Letzter Versuch: Logge Fehler aber fahre fort
         console.error(
