@@ -176,6 +176,13 @@ async function performConsistentAnalysis(
         );
       }
 
+      // Debug: Zeige Punkte pro Aufgabe vor Normalisierung
+      console.log("[Konsistenz] GPT-4o Rohpunkte:", {
+        metaAchieved: analysis.meta?.achievedPoints,
+        metaMax: analysis.meta?.maxPoints,
+        taskPoints: analysis.tasks?.map((t: any) => `${t.taskId}: ${t.points}`) || [],
+      });
+
       // Normalisieren (korrigiert Punkte aus Einzelaufgaben)
       const normalized = normalizeAnalysis(analysis);
 
