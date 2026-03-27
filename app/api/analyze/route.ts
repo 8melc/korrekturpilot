@@ -71,10 +71,12 @@ async function performConsistentAnalysis(
 
   const prompt = buildMasterAnalysisPrompt(input);
   const strictPointsInstruction = `\n\nKRITISCH - PUNKTEVERGABE:
-- PUNKTE MÜSSEN AUSSCHLIESSLICH AUS DEM ERWARTUNGSHORIZONT EXTRAHIERT WERDEN
-- KEINE TEILPUNKTE ERFINDEN ODER "GROSSZÜGIG" BEWERTEN
-- KEINE PUNKTE VERGEBEN, DIE NICHT IM ERWARTUNGSHORIZONT STEHEN
-- JEDE PUNKTVERGABE MUSS SICH DIREKT AUS DEM ERWARTUNGSHORIZONT ABLEITEN LASSEN`;
+- Bewerte die SCHÜLERANTWORTEN anhand des Erwartungshorizonts
+- Vergleiche jede Schülerantwort mit der Musterlösung und vergib Punkte für korrekte Inhalte
+- Die MAXIMALPUNKTZAHL pro Aufgabe ergibt sich aus dem Erwartungshorizont
+- Vergib Teilpunkte, wenn die Antwort teilweise korrekt ist
+- Vergib 0 Punkte NUR wenn die Antwort komplett fehlt oder komplett falsch ist
+- Wenn ein Schüler etwas Richtiges geschrieben hat, MUSS er dafür Punkte bekommen`;
 
   const systemPrompt = `${MASTER_ANALYSIS_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_ENFORCEMENT}${strictPointsInstruction}`;
 
