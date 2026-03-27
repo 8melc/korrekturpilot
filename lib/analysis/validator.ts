@@ -100,6 +100,29 @@ export function normalizeAnalysis(analysis: any): UniversalAnalysis {
     };
   });
 
+  // Korrigiere Punkte für leere/verweigerte Aufgaben
+  const NOT_ATTEMPTED_PHRASES = [
+    'weiß ich nicht', 'weiß nicht', 'keine ahnung',
+    'nicht bearbeitet', 'keine antwort', 'weis nicht',
+    'weiss nicht', 'kein plan',
+  ];
+
+  tasks.forEach((task: UniversalTask) => {
+    const answer = (task.studentAnswerSummary || '').toLowerCase().trim();
+    const isBlank = answer === '' || answer === '-' || answer === '/';
+    const isExplicitlySkipped = NOT_ATTEMPTED_PHRASES.some(p => answer.includes(p));
+
+    if (isBlank || isExplicitlySkipped) {
+      const pointsMatch = task.points.match(/^(\d+)\/(\d+)$/);
+      const achieved = pointsMatch ? parseInt(pointsMatch[1], 10) : 0;
+      if (achieved > 0) {
+        const max = pointsMatch ? pointsMatch[2] : '0';
+        console.warn(`[Konsistenz] Punkte für leere Aufgabe korrigiert: ${task.taskId} war ${achieved}/${max}, wird 0/${max}`);
+        task.points = `0/${max}`;
+      }
+    }
+  });
+
   // KRITISCH: Berechne Gesamtpunkte aus Einzelaufgaben (KI kann falsche Werte in meta liefern)
   let calculatedMaxPoints = 0;
   let calculatedAchievedPoints = 0;

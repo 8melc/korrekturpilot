@@ -73,6 +73,10 @@ REGELN:
 - Interpretiere handschriftliche Antworten wohlwollend — phonetisch/orthographisch nahe Begriffe als korrekt werten.
 - Vergib 0 Punkte NUR wenn die Antwort komplett fehlt oder komplett falsch ist.
 
+**LEERE/VERWEIGERTE AUFGABEN:**
+- Wenn eine Aufgabe leer ist, nicht bearbeitet wurde, oder die Schülerin/der Schüler explizit geschrieben hat "weiß nicht", "keine Ahnung", "-", oder ähnliches, MUSS die Punktzahl 0 sein.
+- Vergib NIEMALS Punkte für leere oder explizit verweigerte Aufgaben.
+
 BEWERTUNGSLOGIK:
 - Was war richtig?
 - Was war falsch?
