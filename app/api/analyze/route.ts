@@ -15,7 +15,6 @@ import type { MasterAnalysisInput, UniversalAnalysis } from "@/lib/analysis/type
 import {
   generateDeterministicSeed,
   validateAnalysisOutput,
-  extractExpectedTaskCount,
 } from "@/lib/consistency";
 import { mapToKlausurAnalyse } from "@/lib/analysis/mapper";
 
@@ -65,7 +64,6 @@ function calculateCost(
 async function performConsistentAnalysis(
   input: MasterAnalysisInput,
   seed: number,
-  expectedTaskCount: number
 ): Promise<UniversalAnalysis> {
   const openai = getOpenAIClient();
 
@@ -88,7 +86,6 @@ async function performConsistentAnalysis(
       console.log(`[Konsistenz] Analyse-Versuch ${attempt + 1}/${MAX_VALIDATION_RETRIES}`, {
         model: MODEL,
         seed,
-        expectedTaskCount,
       });
 
       const response = await openai.chat.completions.create({
@@ -156,8 +153,8 @@ async function performConsistentAnalysis(
         // Letzter Versuch: Normalisiere trotzdem
       }
 
-      // Konsistenz-Validierung (Punkte, Task-Count, Evidence)
-      const consistencyValidation = validateAnalysisOutput(analysis, expectedTaskCount);
+      // Konsistenz-Validierung (Punkte, Evidence)
+      const consistencyValidation = validateAnalysisOutput(analysis);
       if (!consistencyValidation.valid) {
         console.warn(
           `[Konsistenz] Konsistenz-Validierung fehlgeschlagen (Versuch ${attempt + 1}):`,
@@ -436,15 +433,11 @@ export async function POST(request: NextRequest) {
       effectiveStudentName
     );
 
-    // 7. Erwartete Aufgaben-Anzahl aus Erwartungshorizont extrahieren
-    const expectedTaskCount = extractExpectedTaskCount(erwartungshorizont);
-
     console.log("[Konsistenz] Starte Analyse...", {
       klausurTextLength: klausurText.length,
       erwartungshorizontLength: erwartungshorizont.length,
       model: MODEL,
       seed: deterministicSeed,
-      expectedTaskCount,
       studentName: effectiveStudentName,
       correctionId: effectiveCorrectionId,
     });
@@ -461,7 +454,6 @@ export async function POST(request: NextRequest) {
     const analysis = await performConsistentAnalysis(
       input,
       deterministicSeed,
-      expectedTaskCount
     );
 
     // 9. Logging
@@ -523,7 +515,6 @@ export async function POST(request: NextRequest) {
       _consistency: {
         model: MODEL,
         seed: deterministicSeed,
-        expectedTaskCount,
         actualTaskCount: aufgabenAnzahl,
       },
     });

@@ -51,7 +51,6 @@ export interface ValidationResult {
  */
 export function validateAnalysisOutput(
   output: any,
-  expectedTaskCount: number
 ): ValidationResult {
   const errors: string[] = [];
 
@@ -70,15 +69,7 @@ export function validateAnalysisOutput(
     return { valid: false, errors };
   }
 
-  // 1. Task-Count prüfen (nur Warnung, kein harter Fehler)
-  // GPT-4o erkennt die Aufgabenstruktur oft besser als die Regex-basierte Extraktion
-  if (output.tasks.length !== expectedTaskCount) {
-    console.warn(
-      `[Konsistenz] Task count Warnung: expected ${expectedTaskCount}, got ${output.tasks.length} (wird akzeptiert)`
-    );
-  }
-
-  // 2. & 3. Punkte-Summe und Points > maxPoints prüfen
+  // Punkte-Format und Points > maxPoints prüfen
   let calculatedAchievedPoints = 0;
   let calculatedMaxPoints = 0;
 

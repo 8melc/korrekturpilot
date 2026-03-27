@@ -16,7 +16,7 @@ export function validateAnalysis(analysis: any): ValidationResult {
     if (!meta.studentName) errors.push('meta.studentName fehlt');
     if (!meta.class) errors.push('meta.class fehlt');
     if (!meta.subject) errors.push('meta.subject fehlt');
-    if (!meta.date) errors.push('meta.date fehlt');
+    if (!meta.date) meta.date = 'unbekannt';
     if (typeof meta.maxPoints !== 'number') errors.push('meta.maxPoints muss eine Zahl sein');
     if (typeof meta.achievedPoints !== 'number') errors.push('meta.achievedPoints muss eine Zahl sein');
     if (!meta.grade) errors.push('meta.grade fehlt');
