@@ -5,6 +5,8 @@ import { getSubscriptionStatus } from '@/lib/subscription';
 import { createClient } from '@/lib/supabase/server';
 import CheckoutSessionHandler from '@/components/CheckoutSessionHandler';
 
+export const dynamic = 'force-dynamic';
+
 export default async function DashboardPage() {
   const stats = await getDashboardStats();
   const subscription = await getSubscriptionStatus();

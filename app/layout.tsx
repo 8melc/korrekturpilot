@@ -1,22 +1,49 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { RootProvider } from "./providers";
 import AppHeader from "@/components/AppHeader";
 import AppFooter from "@/components/AppFooter";
 import CookieBanner from "@/components/CookieBanner";
 
-const geistSans = Geist({
+const geistSans = localFont({
+  src: [
+    {
+      path: "../public/fonts/GeistVF.woff2",
+      style: "normal",
+    },
+  ],
   variable: "--font-geist-sans",
-  subsets: ["latin"],
-  weight: ['400', '600', '700'],
-  display: 'swap',
+  display: "swap",
+  fallback: [
+    "-apple-system",
+    "BlinkMacSystemFont",
+    "Segoe UI",
+    "Roboto",
+    "Helvetica Neue",
+    "Arial",
+    "sans-serif",
+  ],
 });
 
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: [
+    {
+      path: "../public/fonts/GeistMonoVF.woff2",
+      style: "normal",
+    },
+  ],
   variable: "--font-geist-mono",
-  subsets: ["latin"],
-  display: 'swap',
+  display: "swap",
+  fallback: [
+    "ui-monospace",
+    "SFMono-Regular",
+    "SF Mono",
+    "Menlo",
+    "Consolas",
+    "Liberation Mono",
+    "monospace",
+  ],
 });
 
 export const metadata: Metadata = {
