@@ -48,9 +48,13 @@ export function validateAnalysis(analysis: any): ValidationResult {
   } else {
     const tc = analysis.teacherConclusion;
     if (!tc.summary) errors.push('teacherConclusion.summary fehlt');
-    if (!Array.isArray(tc.studentPatterns)) errors.push('teacherConclusion.studentPatterns muss ein Array sein');
-    if (!Array.isArray(tc.learningNeeds)) errors.push('teacherConclusion.learningNeeds muss ein Array sein');
-    if (!Array.isArray(tc.recommendedActions)) errors.push('teacherConclusion.recommendedActions muss ein Array sein');
+    // Auto-fix: Strings zu Arrays wrappen (GPT-4o gibt manchmal Strings statt Arrays)
+    if (typeof tc.studentPatterns === 'string') tc.studentPatterns = [tc.studentPatterns];
+    if (typeof tc.learningNeeds === 'string') tc.learningNeeds = [tc.learningNeeds];
+    if (typeof tc.recommendedActions === 'string') tc.recommendedActions = [tc.recommendedActions];
+    if (!Array.isArray(tc.studentPatterns)) { tc.studentPatterns = []; }
+    if (!Array.isArray(tc.learningNeeds)) { tc.learningNeeds = []; }
+    if (!Array.isArray(tc.recommendedActions)) { tc.recommendedActions = []; }
   }
 
   return {

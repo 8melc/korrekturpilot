@@ -129,22 +129,18 @@ export function validateAnalysisOutput(
     }
   });
 
-  // 2. Meta-Punkte mit berechneten Punkten vergleichen
+  // 2. Meta-Punkte mit berechneten Punkten vergleichen (nur Warnung, kein harter Fehler)
+  // normalizeAnalysis() berechnet die Summen ohnehin korrekt aus den Einzelaufgaben
   if (output.meta) {
-    if (typeof output.meta.achievedPoints === 'number') {
-      if (calculatedAchievedPoints !== output.meta.achievedPoints) {
-        errors.push(
-          `Points sum mismatch: calculated ${calculatedAchievedPoints}, meta says ${output.meta.achievedPoints}`
-        );
-      }
+    if (typeof output.meta.achievedPoints === 'number' && calculatedAchievedPoints !== output.meta.achievedPoints) {
+      console.warn(
+        `[Konsistenz] Points sum Warnung: calculated ${calculatedAchievedPoints}, meta says ${output.meta.achievedPoints} (wird aus Einzelaufgaben korrigiert)`
+      );
     }
-
-    if (typeof output.meta.maxPoints === 'number') {
-      if (calculatedMaxPoints !== output.meta.maxPoints) {
-        errors.push(
-          `Max points sum mismatch: calculated ${calculatedMaxPoints}, meta says ${output.meta.maxPoints}`
-        );
-      }
+    if (typeof output.meta.maxPoints === 'number' && calculatedMaxPoints !== output.meta.maxPoints) {
+      console.warn(
+        `[Konsistenz] Max points sum Warnung: calculated ${calculatedMaxPoints}, meta says ${output.meta.maxPoints} (wird aus Einzelaufgaben korrigiert)`
+      );
     }
   }
 
