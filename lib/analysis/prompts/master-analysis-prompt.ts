@@ -53,12 +53,25 @@ Erzeuge ein vollständiges Analyseobjekt im folgenden JSON-Schema:
 REGELN:
 - Die JSON-Struktur darf NICHT verändert werden.
 - **KRITISCH: Das Feld "points" MUSS IMMER im Format "X/Y" sein (erreichte Punkte / maximale Punkte), z.B. "3/5", "0/4", "8/10". NIEMALS nur eine Zahl wie "3" verwenden!**
-- **KRITISCH: Analysiere JEDE EINZELNE Aufgabe aus dem Erwartungshorizont. KEINE Aufgabe darf fehlen!**
-- Wenn der Erwartungshorizont Aufgaben 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4 enthält, MUSS deine Analyse auch ALLE diese Aufgaben enthalten.
-- Zähle die Aufgaben im Erwartungshorizont und stelle sicher, dass deine Response GENAU SO VIELE Aufgaben enthält.
-- Jede Aufgabe MUSS korrekt analysiert werden.
+
+**KRITISCH - AUFGABEN-MAPPING VOR BEWERTUNG:**
+- Prüfe ZUERST: Handelt es sich um die Vollversion oder eine differenzierte/gekürzte Version der Klausur?
+- Erkennbar an: "diff." auf dem Deckblatt, abweichende Aufgabennummern, weniger Aufgaben als im Erwartungshorizont.
+- Bewerte NUR Aufgaben, die in der SCHÜLERKLAUSUR tatsächlich vorhanden sind.
+- Wenn die Schülerklausur nur Aufgabe 1 und 2 enthält, aber der Erwartungshorizont Aufgaben 1-5 hat, dann bewerte NUR Aufgabe 1 und 2.
+- Vergib KEINE 0 Punkte für Aufgaben, die in der Schülerklausur nicht vorkommen — lasse sie komplett weg.
+- Die maxPoints in meta MÜSSEN die Summe der tatsächlich bewerteten Aufgaben widerspiegeln, NICHT die Gesamtpunktzahl des Erwartungshorizonts.
+- Mappe die Schülerantworten inhaltlich auf die passenden Aufgaben im Erwartungshorizont, auch wenn die Nummerierung abweicht.
+
+- Jede vorhandene Aufgabe MUSS korrekt analysiert werden.
 - ALLE Inhalte müssen klar, korrekt und fachlich belastbar sein.
 - NUR Inhalte verwenden, die sich aus Musterlösung oder Schülerantwort ableiten lassen.
+
+**TEILPUNKTE-VERGABE:**
+- Vergib Teilpunkte wenn eine Antwort inhaltlich/sinngemäß korrekt ist, auch wenn Fachbegriffe fehlen.
+- Bei Lückentexten: Jeder korrekt eingesetzte Begriff = volle Punktzahl, unabhängig von Rechtschreibung.
+- Interpretiere handschriftliche Antworten wohlwollend — phonetisch/orthographisch nahe Begriffe als korrekt werten.
+- Vergib 0 Punkte NUR wenn die Antwort komplett fehlt oder komplett falsch ist.
 
 BEWERTUNGSLOGIK:
 - Was war richtig?
@@ -172,11 +185,12 @@ ${input.klausurText}
 
 ${input.subject ? `\nFACH: ${input.subject}\nVerwende fachspezifische Konventionen, Operatoren und Bewertungskriterien.\n` : ''}
 
-**WICHTIG - VOLLSTÄNDIGKEIT:**
-1. Identifiziere ALLE Aufgaben im Erwartungshorizont (z.B. 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4)
-2. Analysiere JEDE dieser Aufgaben - auch wenn der Schüler keine Antwort gegeben hat (dann: 0 Punkte, entsprechende Analyse)
-3. Stelle sicher, dass deine Response GENAU SO VIELE Aufgaben enthält wie im Erwartungshorizont definiert
-4. Wenn eine Aufgabe im Erwartungshorizont fehlt, ist deine Analyse UNVOLLSTÄNDIG
+**WICHTIG - AUFGABEN-ABGLEICH:**
+1. Identifiziere zuerst alle Aufgaben, die in den SCHÜLERANTWORTEN tatsächlich bearbeitet wurden
+2. Mappe diese inhaltlich auf die passenden Aufgaben im Erwartungshorizont (auch bei abweichender Nummerierung)
+3. Bewerte NUR die gemappten Aufgaben — nicht vorhandene Aufgaben weglassen
+4. meta.maxPoints = Summe der Maximalpunkte nur der bewerteten Aufgaben
+5. meta.achievedPoints = Summe der erreichten Punkte der bewerteten Aufgaben
 
 GIB ZURÜCK: Nur das JSON-Objekt, keine Erläuterungen.`;
 }
@@ -185,10 +199,11 @@ export const MASTER_ANALYSIS_SYSTEM_PROMPT = `Du bist ein präziser Fachlehrer. 
 
 VERBINDLICHE REGELN:
 1. Analysiere fachlich korrekt basierend auf dem Erwartungshorizont
-2. **KRITISCH: Analysiere JEDE EINZELNE Aufgabe aus dem Erwartungshorizont. KEINE Aufgabe darf fehlen!**
-3. Zähle die Aufgaben im Erwartungshorizont und stelle sicher, dass deine Response GENAU SO VIELE Aufgaben enthält
+2. **KRITISCH: Bewerte NUR Aufgaben, die in der Schülerklausur tatsächlich vorhanden sind. Nicht vorhandene Aufgaben weglassen!**
+3. Bei differenzierten/gekürzten Klausuren: Mappe Schülerantworten inhaltlich auf den Erwartungshorizont
 4. Verwende die universelle JSON-Struktur exakt wie vorgegeben
 5. **KRITISCH: "points" MUSS IMMER im Format "X/Y" sein (z.B. "3/5", "0/4"). NIEMALS nur eine Zahl!**
+6. meta.maxPoints = Summe nur der tatsächlich bewerteten Aufgaben
 5. Alle Textfelder müssen vollständige Sätze enthalten
 6. Passe den Detailgrad an die erreichte Punktzahl an
 7. Erfinde keine Inhalte - nur was aus Erwartungshorizont und Schülerantwort ableitbar ist
