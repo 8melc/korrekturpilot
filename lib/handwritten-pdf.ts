@@ -11,7 +11,7 @@ export async function extractHandwrittenPdfText(uint8: Uint8Array): Promise<stri
     console.log('GOOGLE_AI_KEY vorhanden:', apiKey ? `${apiKey.substring(0, 8)}...` : 'FEHLT');
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const result = await model.generateContent([
       {
