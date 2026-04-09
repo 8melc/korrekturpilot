@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { toast } from 'sonner'
 
 import UploadBox from '@/components/UploadBox'
@@ -17,8 +16,12 @@ import { useAnalysisQueue } from '@/hooks/useAnalysisQueue'
 
 import type { UploadedFile } from '@/components/UploadBox'
 import type { CourseInfo } from '@/types/results'
-import { ensureValidSession } from '@/lib/supabase/session-validator'
 import { getCurrentSchoolYear } from '@/lib/school-year'
+import {
+  getUserFacingErrorMessage,
+  normalizeStatusError,
+  readApiErrorMessage,
+} from '@/lib/user-facing-errors'
 
 const SUBJECT_OPTIONS = ['Mathematik', 'Deutsch', 'Englisch', 'Französisch', 'Spanisch', 'Latein', 'Chemie', 'Physik', 'Biologie', 'Geschichte', 'Geographie', 'Politik', 'Wirtschaft', 'Philosophie', 'Kunst', 'Musik', 'Sport', 'Informatik', 'Sonstiges']
 const GRADE_OPTIONS = ['5', '6', '7', '8', '9', '10', '11', '12', '13']
@@ -136,7 +139,9 @@ export default function CorrectionPage() {
   const [expectationFileName, setExpectationFileName] = useState<string | null>(null)
   const [expectationFileKey, setExpectationFileKey] = useState<string | null>(null)
   const [expectationText, setExpectationText] = useState<string | null>(null)
+  const [expectationError, setExpectationError] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [flowErrorMessage, setFlowErrorMessage] = useState<string | null>(null)
   const [blinkingField, setBlinkingField] = useState<keyof CourseInfo | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [hasAcceptedDataPrivacy, setHasAcceptedDataPrivacy] = useState(false)
@@ -155,6 +160,8 @@ export default function CorrectionPage() {
   
   // Tracks files that have completed saving (prevents double-save)
   const savedCorrectionsRef = useRef<Set<string>>(new Set())
+  const batchOutcomeHandledRef = useRef(false)
+  const surfacedUploadErrorKeysRef = useRef<Set<string>>(new Set())
   
 
   const isCourseComplete = Boolean(course.subject && course.gradeLevel && course.className && course.schoolYear)
@@ -217,6 +224,14 @@ export default function CorrectionPage() {
   const handleDisabledStepClick = (stepNumber: number) => {
     if (!isCourseComplete) {
       handleDisabledUploadClick()
+    } else if (stepNumber >= 3 && !expectationText) {
+      const step2Element = document.querySelector('[id*="step-2"]') || document.querySelector('input[type="file"]')?.closest('.process-card')
+      step2Element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const message = expectationError
+        ? 'Der Erwartungshorizont in Schritt 2 konnte nicht verarbeitet werden. Bitte behebe zuerst diesen Fehler.'
+        : 'Bitte lade zuerst einen gültigen Erwartungshorizont in Schritt 2 hoch.'
+      setErrorMessage(message)
+      setTimeout(() => setErrorMessage(null), 4000)
     } else if (stepNumber === 4 && !hasAcceptedDataPrivacy) {
       const step3Element = document.querySelector('[id*="step-3"]') || document.querySelector('input#privacy-consent')?.closest('.process-card')
       step3Element?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -228,24 +243,64 @@ export default function CorrectionPage() {
   const handleExpectationUpload = async (files: UploadedFile[]) => {
     if (!files.length) return
     const file = files[0]
+    setExpectationError(null)
+    setFlowErrorMessage(null)
+    setErrorMessage(null)
+
     try {
       const fileKey = await uploadFileToStorage(file.file)
-      setExpectationFileName(file.fileName)
-      setExpectationFileKey(fileKey)
       const extractResponse = await fetch('/api/extract-klausur', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileKey })
       })
+
+      if (!extractResponse.ok) {
+        throw new Error(
+          await readApiErrorMessage(
+            extractResponse,
+            'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
+          )
+        )
+      }
+
       const extracted = await extractResponse.json()
-      setExpectationText(extracted.text)
+      if (
+        extracted?.error ||
+        typeof extracted?.text !== 'string' ||
+        !extracted.text.trim()
+      ) {
+        throw new Error(
+          normalizeStatusError(
+            extractResponse.status,
+            typeof extracted?.error === 'string' ? extracted.error : '',
+            'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
+          )
+        )
+      }
+
+      setExpectationFileName(file.fileName)
+      setExpectationFileKey(fileKey)
+      setExpectationText(extracted.text.trim())
+      setExpectationError(null)
       toast.success('Erwartungshorizont erfolgreich hochgeladen!')
     } catch (error) {
-      toast.error('Fehler beim Hochladen des Erwartungshorizonts')
+      const message = getUserFacingErrorMessage(
+        error,
+        'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
+      )
+      setExpectationText(null)
+      setExpectationFileName(null)
+      setExpectationFileKey(null)
+      setHasAcceptedDataPrivacy(false)
+      setExpectationError(message)
+      toast.error(message)
     }
   }
 
   const handleKlausurUpload = (files: UploadedFile[]) => {
+    setFlowErrorMessage(null)
+    setErrorMessage(null)
     setUploads(prev => [...prev, ...files.slice(0, 30)])
   }
 
@@ -253,6 +308,23 @@ export default function CorrectionPage() {
     setUploads(prev => prev.filter(file => file.id !== id))
     // Also remove from processedFilesRef if user manually removes before analysis
     processedFilesRef.current.delete(id)
+    surfacedUploadErrorKeysRef.current.forEach((key) => {
+      if (key.startsWith(`${id}:`)) surfacedUploadErrorKeysRef.current.delete(key)
+    })
+  }
+
+  const handleRetryFile = (id: string) => {
+    uploadQueue.retryItem(id)
+    analysisQueue.removeItem(id)
+    queuedAnalysesRef.current.delete(id)
+    surfacedUploadErrorKeysRef.current.forEach((key) => {
+      if (key.startsWith(`${id}:`)) surfacedUploadErrorKeysRef.current.delete(key)
+    })
+    batchOutcomeHandledRef.current = false
+    setIsAnalyzing(true)
+    setFlowErrorMessage(null)
+    setAnalysisStatusMessage('Der erneute Versuch wurde gestartet. Bitte warte kurz auf die neue Verarbeitung.')
+    toast.info('Die Verarbeitung wird für diese Datei erneut gestartet.')
   }
 
   const handleStartAnalysis = async () => {
@@ -265,6 +337,11 @@ export default function CorrectionPage() {
     try {
       if (!isCourseComplete) {
         setErrorMessage('Bitte vervollständige zuerst die Kursdaten.')
+        return
+      }
+      if (expectationError) {
+        setErrorMessage('Der Erwartungshorizont konnte noch nicht verarbeitet werden. Bitte behebe zuerst den Fehler in Schritt 2 und lade die PDF erneut hoch.')
+        setFlowErrorMessage('Der Upload- oder Extraktionsfehler liegt beim Erwartungshorizont in Schritt 2. Die Datenschutz-Checkbox oder der Start-Button blockieren nicht das Weiterkommen.')
         return
       }
       // FIX: Validate expectation text length (matches API validation)
@@ -282,7 +359,9 @@ export default function CorrectionPage() {
       }
 
       setErrorMessage(null)
+      setFlowErrorMessage(null)
       setIsAnalyzing(true)
+      batchOutcomeHandledRef.current = false
       setAnalysisStatusMessage('Die Analyse wurde gestartet. Bitte diese Seite geöffnet lassen und nicht neu laden oder verlassen, bis die Auswertung abgeschlossen ist.')
 
     const currentResults = readResults()
@@ -360,6 +439,20 @@ export default function CorrectionPage() {
         '✅ Alle hochgeladenen Klausuren sind bereits analysiert – nichts Neues zu tun.'
       )
       setIsAnalyzing(false)
+      const hasExistingErrors =
+        uploadQueue.queue.some(item => ['error', 'errorfinal'].includes(item.status)) ||
+        analysisQueue.queue.some(item => ['error', 'errorfinal'].includes(item.status))
+
+      if (hasExistingErrors) {
+        setAnalysisStatusMessage(
+          'Es gibt noch fehlgeschlagene Dateien. Bitte nutze bei diesen den Button "Erneut versuchen".'
+        )
+        setFlowErrorMessage(
+          'Mindestens eine Datei ist fehlgeschlagen. Bitte starte den Retry direkt an der betroffenen Datei; der Start-Button allein behebt diese Fehler nicht.'
+        )
+        return
+      }
+
       setAnalysisStatusMessage(null)
       // Check if we should redirect
       if (results.length > 0) {
@@ -413,7 +506,12 @@ export default function CorrectionPage() {
       console.error('Fehler beim Starten der Analyse:', error)
       setIsAnalyzing(false)
       setAnalysisStatusMessage(null)
-      toast.error('Die Analyse konnte nicht gestartet werden. Bitte versuche es erneut.')
+      const message = getUserFacingErrorMessage(
+        error,
+        'Die Analyse konnte nicht gestartet werden. Bitte versuche es erneut.'
+      )
+      setFlowErrorMessage(message)
+      toast.error(message)
     }
   }
 
@@ -428,8 +526,12 @@ export default function CorrectionPage() {
     })
 
     if (!urlResponse.ok) {
-      const errorData = await urlResponse.json()
-      throw new Error(errorData.error || 'Upload-URL Fehler')
+      throw new Error(
+        await readApiErrorMessage(
+          urlResponse,
+          'Der Upload der Datei konnte nicht vorbereitet werden. Bitte versuche es erneut.'
+        )
+      )
     }
 
     const { uploadUrl, fileKey } = await urlResponse.json()
@@ -438,15 +540,30 @@ export default function CorrectionPage() {
     return new Promise((resolve, reject) => {
       xhr.upload.addEventListener('progress', e => {
         if (e.lengthComputable) {
-          const progress = Math.round((e.loaded / e.total) * 100)
           // Optional: Update detailed upload progress here if needed
         }
       })
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve(fileKey)
-        else reject(new Error(`Upload failed: ${xhr.status}`))
+        else {
+          reject(
+            new Error(
+              normalizeStatusError(
+                xhr.status,
+                '',
+                'Der Upload der Datei ist fehlgeschlagen. Bitte versuche es erneut.'
+              )
+            )
+          )
+        }
       })
-      xhr.addEventListener('error', () => reject(new Error('Network error')))
+      xhr.addEventListener('error', () =>
+        reject(
+          new Error(
+            'Netzwerkfehler. Bitte prüfe deine Internetverbindung und versuche es erneut.'
+          )
+        )
+      )
       xhr.open('PUT', uploadUrl)
       xhr.setRequestHeader('Content-Type', file.type)
       xhr.send(file)
@@ -587,7 +704,7 @@ export default function CorrectionPage() {
 
       uploadQueue.updateItem(item.correctionId, { status: 'completed', progress: 100 });
     },
-    onError: async (item, error) => {
+    onError: async (item, error, finalStatus) => {
       console.error(`${item.fileName} Analyse fehlgeschlagen:`, error)
       updateStorageEntry(item.correctionId!, {
         status: 'Fehler',
@@ -616,19 +733,37 @@ export default function CorrectionPage() {
         console.error('Fehler beim Update in Supabase', err)
       }
       
-      uploadQueue.updateItem(item.correctionId!, { status: 'error', progress: 0 })
+      uploadQueue.updateItem(item.correctionId!, {
+        status: finalStatus,
+        progress: 0,
+        error,
+      })
+      setFlowErrorMessage(
+        'Mindestens eine Datei konnte nicht verarbeitet werden. Die Ursache liegt im Upload-, Extraktions- oder Analyse-Schritt der betroffenen Datei und nicht an der Datenschutz-Checkbox oder dem Start-Button.'
+      )
+      toast.error(`${item.fileName}: ${error}`)
     }
   })
+
+  useEffect(() => {
+    uploadQueue.queue.forEach((item) => {
+      if (!['error', 'errorfinal'].includes(item.status) || !item.error) return
+
+      const errorKey = `${item.id}:${item.error}`
+      if (surfacedUploadErrorKeysRef.current.has(errorKey)) return
+
+      surfacedUploadErrorKeysRef.current.add(errorKey)
+      toast.error(`${item.fileName}: ${item.error}`)
+    })
+  }, [uploadQueue.queue])
 
   // ========================================================================
   // FINALER REDIRECT: HARD FORCE
   // Prüft, ob ALLE Uploads UND Analysen fertig sind
   // ========================================================================
-  const redirectRef = useRef(false)
-
   useEffect(() => {
     // Abbruch, wenn Analyse nicht aktiv oder leer
-    if (!isAnalyzing || uploadQueue.totalCount === 0) return
+    if (!isAnalyzing || uploadQueue.totalCount === 0 || batchOutcomeHandledRef.current) return
 
     // KRITISCH: Prüfe, ob ALLE Queue-Items wirklich fertig sind (nicht nur Upload, auch Analyse)
     const allFinished = uploadQueue.queue.every(item => 
@@ -641,22 +776,43 @@ export default function CorrectionPage() {
         ['completed', 'error', 'errorfinal'].includes(item.status)
       )
 
-    // Nur weiterleiten, wenn BEIDES fertig ist
-    if (allFinished && allAnalysesFinished && !redirectRef.current) {
+    if (!allFinished || !allAnalysesFinished) {
+      return
+    }
+
+    batchOutcomeHandledRef.current = true
+
+    const failedIds = new Set<string>()
+    uploadQueue.queue.forEach((item) => {
+      if (['error', 'errorfinal'].includes(item.status)) failedIds.add(item.id)
+    })
+    analysisQueue.queue.forEach((item) => {
+      if (['error', 'errorfinal'].includes(item.status)) failedIds.add(item.id)
+    })
+    const totalErrors = failedIds.size
+    const completedCount = uploadQueue.queue.filter(
+      item => item.status === 'completed'
+    ).length
+
+    if (totalErrors === 0) {
       console.log("🚀 ALLE UPLOADS UND ANALYSEN FERTIG. ZWINGE WEITERLEITUNG.")
-      redirectRef.current = true 
-      
-      // Status-Meldung setzen
+      setFlowErrorMessage(null)
       setAnalysisStatusMessage('Analyse abgeschlossen. Du wirst jetzt zu den Ergebnissen weitergeleitet.')
-      
-      // State sofort beenden (stoppt Spinner)
       setIsAnalyzing(false)
 
-      // Hard Redirect via window.location (zuverlässiger als router.push bei Race Conditions)
       setTimeout(() => {
         window.location.href = '/results'
       }, 1500)
+      return
     }
+
+    setIsAnalyzing(false)
+    setAnalysisStatusMessage(
+      `${completedCount} Analysen erfolgreich, ${totalErrors} fehlgeschlagen. Bitte fehlerhafte Dateien erneut versuchen.`
+    )
+    setFlowErrorMessage(
+      'Mindestens eine Datei konnte nicht vollständig verarbeitet werden. Die Fehlermeldungen stehen direkt an den betroffenen Dateien. Bitte versuche diese Dateien erneut; die Datenschutz-Checkbox oder der Start-Button sind nicht der Blocker.'
+    )
   }, [isAnalyzing, uploadQueue.queue, analysisQueue.queue, uploadQueue.totalCount])
 
   // beforeunload Handler zum Schutz vor versehentlichem Verlassen
@@ -688,13 +844,6 @@ export default function CorrectionPage() {
     };
   }, [isAnalyzing])
 
-  const getCurrentStep = () => {
-    if (!isCourseComplete) return 1
-    if (!expectationText) return 2
-    if (uploads.length === 0) return 3
-    return 4
-  }
-
   return (
     <ProtectedRoute>
       <section className="module-section">
@@ -708,7 +857,7 @@ export default function CorrectionPage() {
           Gib kurz die Eckdaten ein und lade die Unterlagen hoch. Den Rest erledigt KorrekturPilot.
         </p>
 
-        {errorMessage && !isCourseComplete && (
+        {errorMessage && (
           <div className="correction-error-message">
             {errorMessage}
           </div>
@@ -740,6 +889,7 @@ export default function CorrectionPage() {
         <div className="process-grid" style={{ marginBottom: 'var(--spacing-2xl)' }}>
           <div 
             className="process-card"
+            id="step-2-erwartungshorizont"
             style={{ 
               opacity: isCourseComplete ? 1 : 0.5, 
               pointerEvents: isCourseComplete ? 'auto' : 'none',
@@ -780,7 +930,24 @@ export default function CorrectionPage() {
                 disabled={!isCourseComplete}
                 onDisabledClick={handleDisabledUploadClick}
               />
-              {expectationFileName && (
+              {expectationError && (
+                <div style={{
+                  marginTop: 'var(--spacing-lg)',
+                  padding: 'var(--spacing-md)',
+                  background: 'var(--color-error-light)',
+                  border: '1px solid var(--color-error)',
+                  borderRadius: 'var(--radius-lg)',
+                  color: 'var(--color-error-dark)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--spacing-xs)'
+                }}>
+                  <strong>Der Erwartungshorizont konnte nicht verarbeitet werden.</strong>
+                  <span>{expectationError}</span>
+                  <span>Bitte lade dieselbe oder eine andere PDF erneut hoch.</span>
+                </div>
+              )}
+              {expectationFileName && expectationText && (
                 <div style={{ marginTop: 'var(--spacing-lg)', padding: 'var(--spacing-md)', background: 'var(--color-success-light)', border: '1px solid var(--color-success)', borderRadius: 'var(--radius-lg)', color: 'var(--color-success-dark)', display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }} aria-hidden="true">
                     <path d="M16.7071 5.29289C17.0976 5.68342 17.0976 6.31658 16.7071 6.70711L8.70711 14.7071C8.31658 15.0976 7.68342 15.0976 7.29289 14.7071L3.29289 10.7071C2.90237 10.3166 2.90237 9.68342 3.29289 9.29289C3.68342 8.90237 4.31658 8.90237 4.70711 9.29289L8 12.5858L15.2929 5.29289C15.6834 4.90237 16.3166 4.90237 16.7071 5.29289Z" fill="currentColor"/>
@@ -793,6 +960,7 @@ export default function CorrectionPage() {
 
           <div 
             className="process-card"
+            id="step-3-datenschutz"
             style={{ 
               display: 'flex', 
               flexDirection: 'column', 
@@ -803,7 +971,7 @@ export default function CorrectionPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)', marginBottom: 'var(--spacing-md)' }}>
               <StepIndicator 
                 stepNumber={3} 
-                isComplete={hasAcceptedDataPrivacy} 
+                isComplete={Boolean(expectationText && hasAcceptedDataPrivacy)} 
                 isCurrent={isCourseComplete && !!expectationText && !hasAcceptedDataPrivacy} 
               />
               <h3 style={{ margin: 0 }}>Schritt 3: Datenschutz bestätigen</h3>
@@ -876,14 +1044,15 @@ export default function CorrectionPage() {
 
           <div 
             className="process-card"
+            id="step-4-klausuren"
             style={{ 
-              opacity: (isCourseComplete && hasAcceptedDataPrivacy) ? 1 : 0.5, 
-              pointerEvents: (isCourseComplete && hasAcceptedDataPrivacy) ? 'auto' : 'none',
+              opacity: (isCourseComplete && !!expectationText && hasAcceptedDataPrivacy) ? 1 : 0.5, 
+              pointerEvents: (isCourseComplete && !!expectationText && hasAcceptedDataPrivacy) ? 'auto' : 'none',
               display: 'flex', flexDirection: 'column', height: '100%', position: 'relative'
             }}
-            onClick={(!isCourseComplete || !hasAcceptedDataPrivacy) ? () => handleDisabledStepClick(4) : undefined}
+            onClick={(!isCourseComplete || !expectationText || !hasAcceptedDataPrivacy) ? () => handleDisabledStepClick(4) : undefined}
           >
-            {(!isCourseComplete || !hasAcceptedDataPrivacy) && (
+            {(!isCourseComplete || !expectationText || !hasAcceptedDataPrivacy) && (
               <div 
                 className="process-card-overlay"
                 onClick={e => { e.stopPropagation(); handleDisabledStepClick(4) }}
@@ -893,7 +1062,7 @@ export default function CorrectionPage() {
               <StepIndicator 
                 stepNumber={4} 
                 isComplete={uploads.length > 0} 
-                isCurrent={hasAcceptedDataPrivacy && uploads.length === 0} 
+                isCurrent={!!expectationText && hasAcceptedDataPrivacy && uploads.length === 0} 
               />
               <h3 style={{ margin: 0 }}>Schritt 4: Klausuren der Schüler</h3>
             </div>
@@ -907,7 +1076,7 @@ export default function CorrectionPage() {
                 buttonLabel="Dateien auswählen"
                 allowMultiple
                 onUpload={handleKlausurUpload}
-                disabled={!isCourseComplete || !hasAcceptedDataPrivacy}
+                disabled={!isCourseComplete || !expectationText || !hasAcceptedDataPrivacy}
                 onDisabledClick={handleDisabledUploadClick}
               />
               
@@ -1012,12 +1181,14 @@ export default function CorrectionPage() {
                   {/* HIER ENDETE DEIN CODE-SCHNIPSEL - HIER IST DER REST */}
                   <UploadProgressList
                     items={uploadQueue.queue}
-                    onRetry={uploadQueue.retryItem}
+                    onRetry={handleRetryFile}
                     onRemove={(id) => {
                       uploadQueue.removeItem(id);
+                      analysisQueue.removeItem(id);
                       setUploads((prev) => prev.filter((u) => u.id !== id));
                       // Also remove from session guard
                       processedFilesRef.current.delete(id);
+                      queuedAnalysesRef.current.delete(id);
                     }}
                   />
                 </div>
@@ -1044,9 +1215,23 @@ export default function CorrectionPage() {
                 Alle Schritte abgeschlossen!
               </p>
               <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--color-gray-700)' }}>
-                Klicke auf "Analyse starten", um die Korrektur zu beginnen.
+                Klicke auf &quot;Analyse starten&quot;, um die Korrektur zu beginnen.
               </p>
             </div>
+          </div>
+        )}
+
+        {flowErrorMessage && (
+          <div style={{
+            marginBottom: 'var(--spacing-lg)',
+            padding: 'var(--spacing-md)',
+            background: 'var(--color-error-light)',
+            border: '1px solid var(--color-error)',
+            borderRadius: 'var(--radius-lg)',
+            color: 'var(--color-error-dark)',
+            lineHeight: '1.6'
+          }}>
+            {flowErrorMessage}
           </div>
         )}
 

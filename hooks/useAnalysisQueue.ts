@@ -2,6 +2,11 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 
+import {
+  getUserFacingErrorMessage,
+  readApiErrorMessage,
+} from '@/lib/user-facing-errors'
+
 export type AnalysisStatus = 'pending' | 'analyzing' | 'completed' | 'error' | 'errorfinal'
 
 export interface AnalysisQueueItem {
@@ -21,7 +26,11 @@ export interface AnalysisQueueItem {
 interface UseAnalysisQueueOptions {
   maxConcurrent?: number
   onAnalysisComplete?: (item: AnalysisQueueItem, analysis: any) => Promise<void>
-  onError?: (item: AnalysisQueueItem, error: string) => Promise<void>
+  onError?: (
+    item: AnalysisQueueItem,
+    error: string,
+    finalStatus: AnalysisStatus
+  ) => Promise<void>
   shouldSkipAnalysis?: (item: AnalysisQueueItem) => boolean | Promise<boolean>
   getStoredResult?: (item: AnalysisQueueItem) => { analysis: any } | null
 }
@@ -132,13 +141,13 @@ export function useAnalysisQueue({
         })
 
         if (!analysisResponse.ok) {
-          const errorData = await analysisResponse.json().catch(() => ({}))
-          const error = new Error(errorData.error || `HTTP ${analysisResponse.status}`)
+          const error = new Error(
+            await readApiErrorMessage(
+              analysisResponse,
+              'Die Analyse konnte nicht durchgeführt werden. Bitte versuche es erneut.'
+            )
+          )
           ;(error as any).httpStatus = analysisResponse.status
-          
-          if (analysisResponse.status === 429) {
-            throw new Error('OpenAI ist gerade überlastet. Bitte versuche es in ein paar Minuten erneut.')
-          }
           throw error
         }
 
@@ -154,14 +163,10 @@ export function useAnalysisQueue({
 
     } catch (error) {
       // FIX: Better error messages for network errors
-      let errorMessage = 'Analyse fehlgeschlagen'
-      if (error instanceof Error) {
-        errorMessage = error.message
-        // Check for network errors
-        if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
-          errorMessage = 'Netzwerkfehler. Bitte prüfe deine Internetverbindung und versuche es erneut.'
-        }
-      }
+      const errorMessage = getUserFacingErrorMessage(
+        error,
+        'Die Analyse konnte nicht durchgeführt werden. Bitte versuche es erneut.'
+      )
       
       const prevRetry = pendingItem.retryCount ?? 0
       const nextRetry = prevRetry + 1
@@ -180,7 +185,7 @@ export function useAnalysisQueue({
           : item
       ))
 
-      if (onError) await onError(pendingItem, errorMessage)
+      if (onError) await onError(pendingItem, errorMessage, finalStatus)
 
       if (retryable && nextRetry <= maxRetries) {
         const delay = Math.min(1000 * Math.pow(2, prevRetry), 8000)
@@ -260,6 +265,5 @@ export function useAnalysisQueue({
     totalCount
   }
 }
-
 
 

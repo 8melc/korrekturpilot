@@ -1,6 +1,12 @@
 // hooks/useUploadQueue.ts
 import { useState, useEffect, useRef, useCallback } from 'react'
 
+import {
+  getUserFacingErrorMessage,
+  normalizeStatusError,
+  readApiErrorMessage,
+} from '@/lib/user-facing-errors'
+
 export interface QueueItem {
   id: string
   fileName: string
@@ -131,14 +137,34 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fileName: nextItem.fileName, fileType: nextItem.file.type, fileSize: nextItem.file.size })
             })
-            if(!urlRes.ok) throw new Error('Upload Init Failed')
+            if (!urlRes.ok) {
+              throw new Error(
+                await readApiErrorMessage(
+                  urlRes,
+                  'Der Upload der Datei konnte nicht vorbereitet werden. Bitte versuche es erneut.'
+                )
+              )
+            }
             const { uploadUrl, fileKey } = await urlRes.json()
             
             // Speichere fileKey im Item
             updateItem(nextItem.id, { fileKey, status: 'extracting', progress: 60 })
 
             // 2. Upload zu S3
-            await fetch(uploadUrl, { method: 'PUT', body: nextItem.file, headers: { 'Content-Type': nextItem.file.type } })
+            const uploadResponse = await fetch(uploadUrl, {
+              method: 'PUT',
+              body: nextItem.file,
+              headers: { 'Content-Type': nextItem.file.type },
+            })
+            if (!uploadResponse.ok) {
+              throw new Error(
+                normalizeStatusError(
+                  uploadResponse.status,
+                  '',
+                  'Der Upload der Datei ist fehlgeschlagen. Bitte versuche es erneut.'
+                )
+              )
+            }
             
 
             // 3. Extract Text
@@ -147,7 +173,28 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fileKey })
             })
+            if (!extRes.ok) {
+              throw new Error(
+                await readApiErrorMessage(
+                  extRes,
+                  'Die PDF konnte nicht gelesen werden. Bitte versuche es mit einer anderen Datei erneut.'
+                )
+              )
+            }
             const extData = await extRes.json()
+            if (
+              extData?.error ||
+              typeof extData?.text !== 'string' ||
+              !extData.text.trim()
+            ) {
+              throw new Error(
+                normalizeStatusError(
+                  extRes.status,
+                  typeof extData?.error === 'string' ? extData.error : '',
+                  'Die PDF konnte nicht gelesen werden. Bitte versuche es mit einer anderen Datei erneut.'
+                )
+              )
+            }
             
             // Callback mit Item inkl. fileKey aufrufen
             await onExtractComplete({ ...nextItem, fileKey }, extData.text)
@@ -159,7 +206,13 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
 
       } catch (error: any) {
         console.error("Queue Error:", error)
-        updateItem(nextItem.id, { status: 'error', error: error.message || 'Fehler' })
+        updateItem(nextItem.id, {
+          status: 'error',
+          error: getUserFacingErrorMessage(
+            error,
+            'Die Datei konnte nicht verarbeitet werden. Bitte versuche es erneut.'
+          ),
+        })
       } finally {
         setActiveCount(prev => Math.max(0, prev - 1))
       }
@@ -188,7 +241,6 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
     retryItem
   }
 }
-
 
 
 

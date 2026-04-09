@@ -125,7 +125,7 @@ export default function UploadProgressList({
                 {getStatusLabel(item.status)}
               </span>
 
-              {item.status === 'error' && (
+              {(item.status === 'error' || item.status === 'errorfinal') && (
                 <button
                   type="button"
                   onClick={() => onRetry(item.id)}
@@ -224,7 +224,6 @@ export default function UploadProgressList({
     </div>
   );
 }
-
 
 
 
