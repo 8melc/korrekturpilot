@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateAnalysis, validateFeedbackOverlap } from './validator';
+import { validateAnalysis, validateFeedbackOverlap, normalizeAnalysis } from './validator';
 import type { UniversalAnalysis } from './types';
 
 describe('validateAnalysis - Meta-Fallbacks', () => {
@@ -109,6 +109,91 @@ describe('validateFeedbackOverlap - BUG3 Fix: Feedback Overlap-Validierung', () 
     const result = validateFeedbackOverlap(analysis);
     expect(result.nextSteps).toEqual(['Übe die Grammatik']);
     expect(result.strengths).toEqual(['Du hast die Rechtschreibung korrekt']);
+  });
+
+  it('should accept a master-call raw output without meta and without teacherConclusion', () => {
+    const rawOutput = {
+      tasks: [
+        {
+          taskId: '1',
+          taskTitle: 'Aufgabe 1',
+          points: '3/5',
+          whatIsCorrect: ['Gut gelöst'],
+          whatIsWrong: [],
+          improvementTips: [],
+          teacherCorrections: [],
+          studentFriendlyTips: [],
+          studentAnswerSummary: '',
+        },
+      ],
+      strengths: ['Du hast die Aufgabe verstanden'],
+      nextSteps: ['Übe die Rechnung'],
+    };
+
+    const result = validateAnalysis(rawOutput);
+    expect(result.isValid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('should still flag tasks array structure problems', () => {
+    const invalid = {
+      tasks: [
+        {
+          taskId: '1',
+          taskTitle: 'Aufgabe 1',
+          points: '3/5',
+          whatIsCorrect: 'not an array',
+          whatIsWrong: [],
+          improvementTips: [],
+          teacherCorrections: [],
+          studentFriendlyTips: [],
+          studentAnswerSummary: '',
+        },
+      ],
+      strengths: [],
+      nextSteps: [],
+    };
+
+    const result = validateAnalysis(invalid);
+    expect(result.isValid).toBe(false);
+    expect(result.errors.some((e) => e.includes('whatIsCorrect'))).toBe(true);
+  });
+
+  it('normalizeAnalysis should compute meta from tasks when raw output lacks meta', () => {
+    const rawOutput = {
+      tasks: [
+        {
+          taskId: '1',
+          taskTitle: 'A1',
+          points: '4/5',
+          whatIsCorrect: ['Richtige Rechnung'],
+          whatIsWrong: [],
+          improvementTips: [],
+          teacherCorrections: [],
+          studentFriendlyTips: [],
+          studentAnswerSummary: 'Die Schülerin hat die Aufgabe richtig gelöst.',
+        },
+        {
+          taskId: '2',
+          taskTitle: 'A2',
+          points: '2/10',
+          whatIsCorrect: ['Ansatz erkennbar'],
+          whatIsWrong: ['Einheit fehlt'],
+          improvementTips: [],
+          teacherCorrections: [],
+          studentFriendlyTips: [],
+          studentAnswerSummary: 'Die Schülerin hat einen Ansatz aufgeschrieben.',
+        },
+      ],
+      strengths: [],
+      nextSteps: [],
+    };
+
+    const normalized = normalizeAnalysis(rawOutput);
+    expect(normalized.meta.maxPoints).toBe(15);
+    expect(normalized.meta.achievedPoints).toBe(6);
+    expect(normalized.teacherConclusion.summary).toBe('');
+    expect(normalized.teacherConclusion.studentPatterns).toEqual([]);
   });
 
   it('should remove multiple overlapping nextSteps', () => {

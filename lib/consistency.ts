@@ -258,7 +258,6 @@ export function validateAnalysisOutput(
   // Datenschutz / Kontextfelder (studentName, class, subject, grade) sowie
   // teacherConclusion werden serverseitig ergänzt und hier bewusst NICHT
   // geprüft — sonst würde der Retry-Loop unnötig feuern.
-  }
 
   return {
     valid: errors.length === 0,
