@@ -290,10 +290,14 @@ export async function performMasterAnalysis(
  *
  * Fehlertolerant: Bei Fehler/Timeout wird ein leeres Conclusion-Objekt
  * zurückgegeben, damit die Gesamtanalyse nicht scheitert.
+ *
+ * Optionaler Seed: bei gleichem Seed (und gleichem Input) liefert OpenAI
+ * deterministisch denselben Conclusion-Text. Wird vom Master-Call durchgereicht.
  */
 export async function generateTeacherConclusion(
   analysis: UniversalAnalysis,
   subject: string | undefined,
+  seed?: number,
 ): Promise<TeacherConclusion> {
   try {
     const openai = getOpenAIClient();
@@ -315,6 +319,7 @@ export async function generateTeacherConclusion(
       ],
       temperature: 0.0,
       top_p: 0.1,
+      ...(typeof seed === 'number' ? { seed } : {}),
       response_format: { type: 'json_object' },
       max_tokens: 2048,
     });
@@ -326,6 +331,7 @@ export async function generateTeacherConclusion(
         completion_tokens: response.usage.completion_tokens,
         total_tokens: response.usage.total_tokens,
         estimated_cost_usd: cost.toFixed(6),
+        seed: typeof seed === 'number' ? seed : 'none',
       });
     }
 

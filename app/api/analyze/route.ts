@@ -303,7 +303,9 @@ async function performConsistentAnalysis(
       }
 
       // Zweiter Call: pädagogische Gesamtbewertung separat erzeugen.
-      normalized.teacherConclusion = await generateTeacherConclusion(normalized, input.subject);
+      // Seed wird durchgereicht, damit auch der Conclusion-Text bei
+      // identischem Input deterministisch reproduzierbar ist.
+      normalized.teacherConclusion = await generateTeacherConclusion(normalized, input.subject, seed);
 
       console.log(`[Konsistenz] Analyse erfolgreich nach ${attempt + 1} Versuch(en)`);
       return {
