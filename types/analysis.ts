@@ -1,3 +1,5 @@
+import type { KlausurAnalyse } from '@/lib/openai';
+
 /**
  * Gemeinsame Datenstruktur für die Analyse
  * Diese Struktur wird EINMAL von der KI generiert und dann
@@ -44,24 +46,17 @@ export interface AnalysisTask {
  * Mappt die aktuelle KlausurAnalyse zu ParsedAnalysis
  * (für Rückwärtskompatibilität)
  */
-export function mapToParsedAnalysis(analysis: {
-  gesamtpunkte: number;
-  erreichtePunkte: number;
-  prozent: number;
-  aufgaben: Array<{
-    aufgabe: string;
-    maxPunkte: number;
-    erreichtePunkte: number;
-    kommentar: string;
-    korrekturen: string[];
-  }>;
-  zusammenfassung: string;
-}, gradeLabel: string): ParsedAnalysis {
+export function mapToParsedAnalysis(
+  analysis: KlausurAnalyse,
+  gradeLabel: string
+): ParsedAnalysis {
+  const { _internal: _ignoredInternal, ...publicAnalysis } = analysis;
+
   // Parse Zusammenfassung in Stärken und Nächste Schritte
   const strengths: string[] = [];
   const nextSteps: string[] = [];
   
-  const summary = analysis.zusammenfassung || '';
+  const summary = publicAnalysis.zusammenfassung || '';
   
   // Versuche Stärken zu extrahieren
   const strengthsMatch = summary.match(/(?:STÄRKEN|Stärken|STRENGTHS)[:\s]*([\s\S]*?)(?=NÄCHSTE|ENTWICKLUNGS|DEVELOPMENT|$)/i);
@@ -93,7 +88,7 @@ export function mapToParsedAnalysis(analysis: {
 
   // Falls keine strukturierten Stärken gefunden, versuche aus Aufgaben zu extrahieren
   if (strengths.length === 0) {
-    analysis.aufgaben.forEach((aufgabe) => {
+    publicAnalysis.aufgaben.forEach((aufgabe) => {
       const comment = aufgabe.kommentar || '';
       const richtigMatch = comment.match(/(?:DAS WAR RICHTIG|richtig|korrekt)[:\s]*([\s\S]*?)(?=HIER GAB|ABZÜGE|VERBESSERUNG|$)/i);
       if (richtigMatch) {
@@ -106,18 +101,18 @@ export function mapToParsedAnalysis(analysis: {
   }
 
   // KRITISCH: Berechne Gesamtpunkte aus Einzelaufgaben (KI kann falsche Werte liefern)
-  const calculatedMaxPoints = analysis.aufgaben.reduce((sum: number, aufgabe: any) => {
+  const calculatedMaxPoints = publicAnalysis.aufgaben.reduce((sum: number, aufgabe: any) => {
     return sum + (aufgabe.maxPunkte || 0);
   }, 0);
   
-  const calculatedAchievedPoints = analysis.aufgaben.reduce((sum: number, aufgabe: any) => {
+  const calculatedAchievedPoints = publicAnalysis.aufgaben.reduce((sum: number, aufgabe: any) => {
     return sum + (aufgabe.erreichtePunkte || 0);
   }, 0);
 
   // Verwende berechnete Punkte, falls vorhanden, sonst Fallback auf KI-Werte
-  const gesamtpunkte = calculatedMaxPoints > 0 ? calculatedMaxPoints : analysis.gesamtpunkte;
-  const erreichtePunkte = calculatedAchievedPoints > 0 ? calculatedAchievedPoints : analysis.erreichtePunkte;
-  const prozent = gesamtpunkte > 0 ? (erreichtePunkte / gesamtpunkte) * 100 : analysis.prozent;
+  const gesamtpunkte = calculatedMaxPoints > 0 ? calculatedMaxPoints : publicAnalysis.gesamtpunkte;
+  const erreichtePunkte = calculatedAchievedPoints > 0 ? calculatedAchievedPoints : publicAnalysis.erreichtePunkte;
+  const prozent = gesamtpunkte > 0 ? (erreichtePunkte / gesamtpunkte) * 100 : publicAnalysis.prozent;
 
   // Berechne Note basierend auf korrektem Prozentsatz (falls gradeLabel falsch ist)
   // Verwende SEK I Notenschlüssel als Fallback
@@ -151,7 +146,7 @@ export function mapToParsedAnalysis(analysis: {
     strengths: strengths.length > 0 ? strengths : [],
     nextSteps: nextSteps.length > 0 ? nextSteps : [],
     summary: summary,
-    aufgaben: analysis.aufgaben.map((aufgabe, index) => {
+    aufgaben: publicAnalysis.aufgaben.map((aufgabe, index) => {
       // Parse Kommentar in whatIsCorrect, whatIsWrong, improvementTips
       const comment = aufgabe.kommentar || '';
       const whatIsCorrect: string[] = [];
@@ -241,4 +236,3 @@ export function mapToParsedAnalysis(analysis: {
     }),
   };
 }
-

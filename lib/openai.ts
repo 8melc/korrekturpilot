@@ -75,6 +75,12 @@ export interface KlausurAnalyse {
     editedAt: string;
     version?: number;
   };
+  _internal?: {
+    ocrText?: string;
+    ocrVersion?: number;
+    ocrSource?: string;
+    extractedAt?: string;
+  };
   reused?: boolean;
   creditUsed?: boolean;
 }

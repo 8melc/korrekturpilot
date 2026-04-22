@@ -16,6 +16,7 @@ import {
   type ManualOverrideDraft,
   type ManualOverrideTaskDraft,
 } from '@/lib/manual-override';
+import { getOcrInspectionState } from '@/lib/analysis-internal';
 
 interface DetailDrawerProps {
   entry: StoredResultEntry | null;
@@ -296,6 +297,7 @@ export default function DetailDrawer({ entry, isOpen, onClose, onSaved, isDemo =
   const displayTasks = teacherView?.tasks || [];
   const klausurUrl = getPublicPdfUrl(entry?.klausurFileKey);
   const expectationUrl = getPublicPdfUrl(entry?.expectationFileKey);
+  const ocrInspection = getOcrInspectionState(activeAnalysis);
 
   const overview = useMemo(() => {
     if (isEditMode && draft) {
@@ -499,22 +501,105 @@ export default function DetailDrawer({ entry, isOpen, onClose, onSaved, isDemo =
 
             <div>
               {activeTab === 'klausur' && (
-                <div style={{ position: 'relative', height: '480px', width: '100%', borderRadius: 'var(--radius-xl)', background: 'rgba(15, 23, 42, 0.95)', color: '#f1f5f9' }}>
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 'var(--spacing-sm)' }}>
-                    <p style={{ fontSize: '0.875rem', color: '#cbd5e1' }}>Klausur (Scan)</p>
-                    {isDemo ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--spacing-sm)', padding: 'var(--spacing-md)', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
-                        <p style={{ fontSize: '0.875rem', color: '#fbbf24', fontWeight: 600 }}>Beispielansicht</p>
-                        <p style={{ fontSize: '0.75rem', color: '#cbd5e1', textAlign: 'center', maxWidth: '320px', lineHeight: '1.5' }}>
-                          Bei der echten Nutzung können Sie hier Ihre hochgeladene Klausur direkt öffnen und ansehen.
-                        </p>
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => openInNewTab(klausurUrl)} disabled={!klausurUrl} className="secondary-button">
-                        Klausur öffnen
-                      </button>
-                    )}
+                <div style={{ display: 'grid', gap: 'var(--spacing-md)' }}>
+                  <div style={{ position: 'relative', minHeight: '220px', width: '100%', borderRadius: 'var(--radius-xl)', background: 'rgba(15, 23, 42, 0.95)', color: '#f1f5f9' }}>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 'var(--spacing-sm)' }}>
+                      <p style={{ fontSize: '0.875rem', color: '#cbd5e1' }}>Klausur (Scan)</p>
+                      {isDemo ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--spacing-sm)', padding: 'var(--spacing-md)', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+                          <p style={{ fontSize: '0.875rem', color: '#fbbf24', fontWeight: 600 }}>Beispielansicht</p>
+                          <p style={{ fontSize: '0.75rem', color: '#cbd5e1', textAlign: 'center', maxWidth: '320px', lineHeight: '1.5' }}>
+                            Bei der echten Nutzung können Sie hier Ihre hochgeladene Klausur direkt öffnen und ansehen.
+                          </p>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => openInNewTab(klausurUrl)} disabled={!klausurUrl} className="secondary-button">
+                          Klausur öffnen
+                        </button>
+                      )}
+                    </div>
                   </div>
+
+                  {!isDemo && (
+                    <details
+                      style={{
+                        border: '1px solid var(--color-gray-200)',
+                        borderRadius: 'var(--radius-xl)',
+                        background: 'var(--color-gray-50)',
+                        padding: 'var(--spacing-md)',
+                      }}
+                    >
+                      <summary
+                        style={{
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 'var(--spacing-md)',
+                          listStyle: 'none',
+                          fontWeight: 600,
+                          color: 'var(--color-gray-900)',
+                        }}
+                      >
+                        <span>Extrahierter OCR-Text</span>
+                        <span
+                          style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            letterSpacing: '0.02em',
+                            textTransform: 'uppercase',
+                            color: 'var(--color-gray-600)',
+                            background: 'white',
+                            border: '1px solid var(--color-gray-300)',
+                            borderRadius: '999px',
+                            padding: '0.2rem 0.55rem',
+                          }}
+                        >
+                          Nur intern
+                        </span>
+                      </summary>
+
+                      <div style={{ display: 'grid', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-md)' }}>
+                        <p style={{ fontSize: '0.8125rem', color: 'var(--color-gray-600)', lineHeight: '1.5' }}>
+                          Aus der hochgeladenen PDF extrahiert. Dieser Block dient nur der internen Prüfung und ist nicht Teil der Bewertung.
+                        </p>
+
+                        {ocrInspection.kind === 'available' && (
+                          <pre
+                            style={{
+                              margin: 0,
+                              padding: 'var(--spacing-md)',
+                              borderRadius: 'var(--radius-lg)',
+                              border: '1px solid var(--color-gray-200)',
+                              background: 'white',
+                              color: 'var(--color-gray-900)',
+                              fontSize: '0.8125rem',
+                              lineHeight: '1.55',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              overflowY: 'auto',
+                              maxHeight: '320px',
+                              fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
+                            }}
+                          >
+                            {ocrInspection.text}
+                          </pre>
+                        )}
+
+                        {ocrInspection.kind === 'empty' && (
+                          <div style={{ padding: 'var(--spacing-md)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-gray-200)', background: 'white', color: 'var(--color-gray-700)', fontSize: '0.875rem' }}>
+                            Die OCR-Erkennung wurde gespeichert, hat für diese Klausur aber keinen lesbaren Text geliefert.
+                          </div>
+                        )}
+
+                        {ocrInspection.kind === 'legacy' && (
+                          <div style={{ padding: 'var(--spacing-md)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-gray-200)', background: 'white', color: 'var(--color-gray-700)', fontSize: '0.875rem' }}>
+                            Für diesen älteren Eintrag liegt noch kein gespeicherter OCR-Text vor.
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  )}
                 </div>
               )}
 

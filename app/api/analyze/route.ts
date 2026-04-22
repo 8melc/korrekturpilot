@@ -192,9 +192,23 @@ async function performConsistentAnalysis(
       // JSON parsen
       let analysis: any;
       try {
-        analysis = JSON.parse(responseText);
+      analysis = JSON.parse(responseText);
       } catch (parseError) {
         throw new Error(`JSON-Parsing fehlgeschlagen: ${parseError}`);
+      }
+
+      analysis.meta = analysis.meta || {};
+      if (!analysis.meta.studentName) {
+        analysis.meta.studentName = input.studentName || "unbekannt";
+      }
+      if (!analysis.meta.class && input.className) {
+        analysis.meta.class = input.className;
+      }
+      if (!analysis.meta.subject && input.subject) {
+        analysis.meta.subject = input.subject;
+      }
+      if (!analysis.meta.date) {
+        analysis.meta.date = new Date().toISOString().split("T")[0];
       }
 
       // Strukturelle Validierung (Schema)
@@ -511,6 +525,10 @@ export async function POST(request: NextRequest) {
       klausurText: normalizedKlausurText,
       erwartungshorizont: normalizedErwartungshorizont,
       subject,
+      studentName:
+        typeof studentName === "string" && studentName.trim().length > 0
+          ? studentName.trim()
+          : correctionData?.student_name?.trim() || undefined,
       className,
     };
 

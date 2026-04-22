@@ -3,6 +3,7 @@ import { createClientFromRequest } from '@/lib/supabase/server';
 import { executeWithRetry, isJWTExpiredError } from '@/lib/supabase/error-handler';
 import type { CourseInfo, ResultStatus } from '@/types/results';
 import type { KlausurAnalyse } from '@/lib/openai';
+import { mergeAnalysisInternal } from '@/lib/analysis-internal';
 
 function mapStatusToDb(status: ResultStatus): string {
   switch (status) {
@@ -276,13 +277,6 @@ export async function PATCH(request: NextRequest) {
       updated_at: new Date().toISOString(),
     };
 
-    if ('analysis' in body) {
-      updates.analysis = body.analysis ?? null;
-    }
-    if (body.status) {
-      updates.status = mapStatusToDb(body.status);
-    }
-
     const { data: existing, error: existingError } = await loadExistingCorrection(
       supabase,
       user.id,
@@ -302,6 +296,16 @@ export async function PATCH(request: NextRequest) {
 
     if (!existing) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    if ('analysis' in body) {
+      updates.analysis =
+        body.analysis === null
+          ? null
+          : mergeAnalysisInternal(body.analysis, existing.analysis ?? null);
+    }
+    if (body.status) {
+      updates.status = mapStatusToDb(body.status);
     }
 
     const { error } = await executeWithRetry(
@@ -332,7 +336,12 @@ export async function PATCH(request: NextRequest) {
       correction: {
         id: body.id,
         status: body.status ? mapStatusToDb(body.status) : existing.status ?? null,
-        analysis: 'analysis' in body ? body.analysis ?? null : existing.analysis ?? null,
+        analysis:
+          'analysis' in body
+            ? body.analysis === null
+              ? null
+              : mergeAnalysisInternal(body.analysis, existing.analysis ?? null)
+            : existing.analysis ?? null,
       },
     });
   } catch (error: any) {

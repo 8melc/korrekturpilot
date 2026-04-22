@@ -67,4 +67,21 @@ describe('manual override helpers', () => {
       'Bitte künftig vollständiger begründen.',
     ])
   })
+
+  it('preserves internal OCR metadata when applying manual overrides', () => {
+    const analysisWithInternal: KlausurAnalyse = {
+      ...analysis,
+      _internal: {
+        ocrText: 'Erkannter OCR-Inhalt',
+        ocrVersion: 1,
+        ocrSource: 'gemini',
+      },
+    }
+    const draft = createManualOverrideDraft(analysisWithInternal, course)
+    draft.tasks[0].erreichtePunkte = 3
+
+    const nextAnalysis = applyManualOverride(analysisWithInternal, draft, course)
+
+    expect(nextAnalysis._internal).toEqual(analysisWithInternal._internal)
+  })
 })

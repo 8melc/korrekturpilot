@@ -30,6 +30,11 @@ import {
   RESTART_CORRECTION_STORAGE_KEY,
   type RestartCorrectionPayload,
 } from '@/lib/restart-correction'
+import {
+  mergeAnalysisInternal,
+  OCR_INTERNAL_VERSION,
+  stripAnalysisForLocalCache,
+} from '@/lib/analysis-internal'
 
 const SUBJECT_OPTIONS = ['Mathematik', 'Deutsch', 'Englisch', 'Französisch', 'Spanisch', 'Latein', 'Chemie', 'Physik', 'Biologie', 'Geschichte', 'Geographie', 'Politik', 'Wirtschaft', 'Philosophie', 'Kunst', 'Musik', 'Sport', 'Informatik', 'Sonstiges']
 const GRADE_OPTIONS = ['5', '6', '7', '8', '9', '10', '11', '12', '13']
@@ -923,18 +928,26 @@ export default function CorrectionPage() {
       }
       savedCorrectionsRef.current.add(item.correctionId);
 
+      const analysisForServer = mergeAnalysisInternal(analysis, undefined, {
+        ocrText: item.klausurText,
+        ocrVersion: OCR_INTERNAL_VERSION,
+        ocrSource: 'gemini',
+        extractedAt: new Date().toISOString(),
+      })
+      const analysisForLocal = stripAnalysisForLocalCache(analysisForServer)
+
       const entry = {
         id: item.correctionId,
         studentName: item.fileName.replace('.pdf', ''),
         status: 'Bereit' as const,
         fileName: item.fileName,
         course,
-        analysis,
+        analysis: analysisForServer,
         fileUrl: item.fileKey ?? null,           // <- WICHTIG
         expectationUrl: expectationFileKey ?? null,
       };
 
-      updateStorageEntry(item.correctionId, { status: 'Bereit', analysis });
+      updateStorageEntry(item.correctionId, { status: 'Bereit', analysis: analysisForLocal });
 
       try {
         await fetch('/api/corrections', {
@@ -953,7 +966,7 @@ export default function CorrectionPage() {
       console.error(`${item.fileName} Analyse fehlgeschlagen:`, error)
       updateStorageEntry(item.correctionId!, {
         status: 'Fehler',
-        analysis: { error },
+        analysis: { error, _internal: { ocrVersion: OCR_INTERNAL_VERSION } },
         gesamtpunkte: 0,
         erreichtePunkte: 0,
         prozent: 0,

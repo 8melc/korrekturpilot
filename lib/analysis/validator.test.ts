@@ -1,6 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { validateFeedbackOverlap } from './validator';
+import { validateAnalysis, validateFeedbackOverlap } from './validator';
 import type { UniversalAnalysis } from './types';
+
+describe('validateAnalysis - Meta-Fallbacks', () => {
+  it('does not require studentName and grade during schema validation', () => {
+    const result = validateAnalysis({
+      meta: {
+        class: '10a',
+        subject: 'Mathe',
+        date: '2025-01-01',
+        maxPoints: 20,
+        achievedPoints: 15,
+      },
+      tasks: [],
+      strengths: [],
+      nextSteps: [],
+      teacherConclusion: {
+        summary: 'Solide Leistung.',
+        studentPatterns: [],
+        learningNeeds: [],
+        recommendedActions: [],
+      },
+    });
+
+    expect(result.isValid).toBe(true);
+    expect(result.errors).not.toContain('meta.studentName fehlt');
+    expect(result.errors).not.toContain('meta.grade fehlt');
+  });
+});
 
 describe('validateFeedbackOverlap - BUG3 Fix: Feedback Overlap-Validierung', () => {
   it('should remove nextStep when it overlaps with strength (Rechnung)', () => {
@@ -111,4 +138,3 @@ describe('validateFeedbackOverlap - BUG3 Fix: Feedback Overlap-Validierung', () 
     expect(result.strengths.length).toBe(2);
   });
 });
-
