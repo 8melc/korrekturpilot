@@ -182,32 +182,25 @@ export interface ValidationResult {
 }
 
 /**
- * Validiert die Struktur und Konsistenz der Analyse-Ausgabe.
- * 
- * Prüft:
- * 1. Task-Count stimmt mit erwarteter Anzahl überein
- * 2. Summe der Punkte = achievedPoints in meta
- * 3. Keine erreichten Punkte > maxPunkte
- * 4. Evidence-Felder (whatIsCorrect/whatIsWrong) nicht beide leer
- * 5. Pflichtfelder vorhanden
+ * Validiert die Rohantwort des Master-Analyse-Calls.
  *
- * @param output - Die Analyse-Ausgabe von OpenAI
- * @param expectedTaskCount - Erwartete Anzahl an Aufgaben (aus Erwartungshorizont)
- * @returns ValidationResult mit valid-Flag und Error-Array
+ * Prüft nur Felder, die das Modell wirklich liefern soll:
+ * - tasks[] mit korrektem points-Format ("X/Y")
+ * - Evidence in whatIsCorrect/whatIsWrong
+ * - strengths/nextSteps als Arrays (dürfen leer sein, wird serverseitig ergänzt)
+ *
+ * Meta-Felder (studentName, class, grade, maxPoints, achievedPoints) und
+ * teacherConclusion werden nach dem Call serverseitig befüllt und hier
+ * bewusst NICHT geprüft.
  */
 export function validateAnalysisOutput(
   output: any,
 ): ValidationResult {
   const errors: string[] = [];
 
-  // Grundstruktur prüfen
   if (!output) {
     errors.push('Output is null or undefined');
     return { valid: false, errors };
-  }
-
-  if (!output.meta) {
-    errors.push('Missing meta object');
   }
 
   if (!output.tasks || !Array.isArray(output.tasks)) {
@@ -215,14 +208,9 @@ export function validateAnalysisOutput(
     return { valid: false, errors };
   }
 
-  // Punkte-Format und Points > maxPoints prüfen
-  let calculatedAchievedPoints = 0;
-  let calculatedMaxPoints = 0;
-
   output.tasks.forEach((task: any, index: number) => {
     const taskId = task.taskId || `Task ${index + 1}`;
 
-    // Points-Format prüfen: "erreicht/max"
     if (!task.points || typeof task.points !== 'string') {
       errors.push(`${taskId}: Missing or invalid points field`);
       return;
@@ -237,17 +225,12 @@ export function validateAnalysisOutput(
     const achieved = parseInt(pointsMatch[1], 10);
     const max = parseInt(pointsMatch[2], 10);
 
-    calculatedAchievedPoints += achieved;
-    calculatedMaxPoints += max;
-
-    // 3. Points > maxPoints prüfen
     if (achieved > max) {
       errors.push(
         `${taskId}: Achieved points (${achieved}) exceeds max points (${max})`
       );
     }
 
-    // 4. Evidence-Felder prüfen
     const hasWhatIsCorrect = Array.isArray(task.whatIsCorrect) && task.whatIsCorrect.length > 0;
     const hasWhatIsWrong = Array.isArray(task.whatIsWrong) && task.whatIsWrong.length > 0;
 
@@ -257,7 +240,6 @@ export function validateAnalysisOutput(
       );
     }
 
-    // Pflichtfelder prüfen
     if (!task.taskId) {
       errors.push(`Task ${index + 1}: Missing taskId`);
     }
@@ -266,36 +248,16 @@ export function validateAnalysisOutput(
     }
   });
 
-  // 2. Meta-Punkte mit berechneten Punkten vergleichen (nur Warnung, kein harter Fehler)
-  // normalizeAnalysis() berechnet die Summen ohnehin korrekt aus den Einzelaufgaben
-  if (output.meta) {
-    if (typeof output.meta.achievedPoints === 'number' && calculatedAchievedPoints !== output.meta.achievedPoints) {
-      console.warn(
-        `[Konsistenz] Points sum Warnung: calculated ${calculatedAchievedPoints}, meta says ${output.meta.achievedPoints} (wird aus Einzelaufgaben korrigiert)`
-      );
-    }
-    if (typeof output.meta.maxPoints === 'number' && calculatedMaxPoints !== output.meta.maxPoints) {
-      console.warn(
-        `[Konsistenz] Max points sum Warnung: calculated ${calculatedMaxPoints}, meta says ${output.meta.maxPoints} (wird aus Einzelaufgaben korrigiert)`
-      );
-    }
+  if (!Array.isArray(output.strengths)) {
+    errors.push('strengths must be an array');
+  }
+  if (!Array.isArray(output.nextSteps)) {
+    errors.push('nextSteps must be an array');
   }
 
-  // Datenschutz / Kontextfelder:
-  // Diese Felder dürfen nachgelagert aus sicherem Kontext ergänzt werden
-  // und sollen keinen Retry auslösen, wenn die Arbeit anonymisiert ist.
-
-  // teacherConclusion prüfen
-  if (!output.teacherConclusion || !output.teacherConclusion.summary) {
-    errors.push('Missing teacherConclusion.summary');
-  }
-
-  // strengths und nextSteps prüfen
-  if (!Array.isArray(output.strengths) || output.strengths.length === 0) {
-    errors.push('Missing or empty strengths array');
-  }
-  if (!Array.isArray(output.nextSteps) || output.nextSteps.length === 0) {
-    errors.push('Missing or empty nextSteps array');
+  // Datenschutz / Kontextfelder (studentName, class, subject, grade) sowie
+  // teacherConclusion werden serverseitig ergänzt und hier bewusst NICHT
+  // geprüft — sonst würde der Retry-Loop unnötig feuern.
   }
 
   return {

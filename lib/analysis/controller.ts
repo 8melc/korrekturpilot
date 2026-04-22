@@ -2,9 +2,14 @@ import { getOpenAIClient } from '../openai';
 import { buildMasterAnalysisPrompt, MASTER_ANALYSIS_SYSTEM_PROMPT } from './prompts/master-analysis-prompt';
 import { buildTeacherRenderPrompt, TEACHER_RENDER_SYSTEM_PROMPT } from './prompts/teacher-render-prompt';
 import { buildStudentRenderPrompt, STUDENT_RENDER_SYSTEM_PROMPT } from './prompts/student-render-prompt';
+import {
+  buildTeacherConclusionPrompt,
+  TEACHER_CONCLUSION_SYSTEM_PROMPT,
+  emptyTeacherConclusion,
+} from './prompts/teacher-conclusion-prompt';
 import { validateAnalysis, normalizeAnalysis } from './validator';
 import { JSON_SCHEMA_ENFORCEMENT } from './prompts/json-schema-enforcement';
-import type { UniversalAnalysis, MasterAnalysisInput, RenderInput } from './types';
+import type { UniversalAnalysis, MasterAnalysisInput, RenderInput, TeacherConclusion } from './types';
 import { getGradeInfo, getPerformanceLevel } from '../grades';
 import { polishLanguage } from '../language-polisher';
 import { validateDistribution, getDistributionConfig, calculatePercentage } from './strength-nextsteps-distribution';
@@ -232,6 +237,10 @@ export async function performMasterAnalysis(
         analysis.meta.date = new Date().toISOString().split('T')[0];
       }
 
+      // Zweiter Call: Pädagogische Gesamtbewertung (teacherConclusion).
+      // Input: bereits normalisierte Tasks und berechnete Meta-Werte.
+      analysis.teacherConclusion = await generateTeacherConclusion(analysis, input.subject);
+
       // normalized wurde bereits oben berechnet
       // Prüfe und korrigiere Verteilung von Stärken und Nächsten Schritten
       const percentage = calculatePercentage(analysis.meta.achievedPoints, analysis.meta.maxPoints);
@@ -273,6 +282,70 @@ export async function performMasterAnalysis(
     stack: finalError.stack,
   });
   throw finalError;
+}
+
+/**
+ * Zweiter OpenAI-Call: erzeugt die pädagogische Gesamtbewertung
+ * (teacherConclusion) auf Basis der bereits normalisierten Tasks + meta.
+ *
+ * Fehlertolerant: Bei Fehler/Timeout wird ein leeres Conclusion-Objekt
+ * zurückgegeben, damit die Gesamtanalyse nicht scheitert.
+ */
+export async function generateTeacherConclusion(
+  analysis: UniversalAnalysis,
+  subject: string | undefined,
+): Promise<TeacherConclusion> {
+  try {
+    const openai = getOpenAIClient();
+    const prompt = buildTeacherConclusionPrompt({
+      tasks: analysis.tasks,
+      meta: {
+        maxPoints: analysis.meta.maxPoints,
+        achievedPoints: analysis.meta.achievedPoints,
+        grade: analysis.meta.grade,
+      },
+      subject,
+    });
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: TEACHER_CONCLUSION_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.0,
+      top_p: 0.1,
+      response_format: { type: 'json_object' },
+      max_tokens: 2048,
+    });
+
+    if (response.usage) {
+      const cost = calculateCost(response.usage, 'gpt-4o-mini');
+      console.log('[Token-Usage] Teacher-Conclusion:', {
+        prompt_tokens: response.usage.prompt_tokens,
+        completion_tokens: response.usage.completion_tokens,
+        total_tokens: response.usage.total_tokens,
+        estimated_cost_usd: cost.toFixed(6),
+      });
+    }
+
+    const responseText = response.choices[0]?.message?.content;
+    if (!responseText) {
+      console.warn('[Teacher-Conclusion] Leere Antwort, verwende leeres Fallback.');
+      return emptyTeacherConclusion();
+    }
+
+    const parsed = JSON.parse(responseText);
+    return {
+      summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+      studentPatterns: Array.isArray(parsed.studentPatterns) ? parsed.studentPatterns : [],
+      learningNeeds: Array.isArray(parsed.learningNeeds) ? parsed.learningNeeds : [],
+      recommendedActions: Array.isArray(parsed.recommendedActions) ? parsed.recommendedActions : [],
+    };
+  } catch (error) {
+    console.error('[Teacher-Conclusion] Fehler beim Generieren:', error);
+    return emptyTeacherConclusion();
+  }
 }
 
 /**

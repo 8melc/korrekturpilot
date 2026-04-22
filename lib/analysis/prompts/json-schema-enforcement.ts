@@ -1,13 +1,5 @@
 export const JSON_SCHEMA_ENFORCEMENT = `Alle folgenden Felder müssen IMMER vorhanden sein.
-Leere Arrays sind erlaubt, fehlende nicht:
-
-- meta.studentName
-- meta.class
-- meta.subject
-- meta.date
-- meta.maxPoints
-- meta.achievedPoints
-- meta.grade
+Leere Arrays sind erlaubt, fehlende Felder nicht:
 
 - tasks[*].taskId
 - tasks[*].taskTitle
@@ -22,7 +14,5 @@ Leere Arrays sind erlaubt, fehlende nicht:
 - strengths
 - nextSteps
 
-- teacherConclusion.summary
-- teacherConclusion.studentPatterns
-- teacherConclusion.learningNeeds
-- teacherConclusion.recommendedActions`;
+Meta-Felder (maxPoints, achievedPoints, grade, studentName, class, subject, date)
+und teacherConclusion werden vom Server ergänzt — NICHT vom Modell liefern.`;

@@ -54,6 +54,19 @@ export interface MasterAnalysisInput {
 }
 
 /**
+ * Rohoutput des Master-Analyse-Calls.
+ *
+ * Das Modell liefert nur tasks + strengths + nextSteps. Meta-Felder und
+ * teacherConclusion werden serverseitig ergänzt (siehe
+ * normalizeAnalysis, getGradeInfo, generateTeacherConclusion).
+ */
+export interface MasterAnalysisRawOutput {
+  tasks: UniversalTask[];
+  strengths: string[];
+  nextSteps: string[];
+}
+
+/**
  * Input für Renderer
  */
 export interface RenderInput {

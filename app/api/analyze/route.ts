@@ -10,7 +10,7 @@ import { buildMasterAnalysisPrompt, MASTER_ANALYSIS_SYSTEM_PROMPT } from "@/lib/
 import { JSON_SCHEMA_ENFORCEMENT } from "@/lib/analysis/prompts/json-schema-enforcement";
 import { validateAnalysis, normalizeAnalysis } from "@/lib/analysis/validator";
 import { getGradeInfo, getPerformanceLevel } from "@/lib/grades";
-import { extractGradeLevelFromClassName } from "@/lib/analysis/controller";
+import { extractGradeLevelFromClassName, generateTeacherConclusion } from "@/lib/analysis/controller";
 import type { MasterAnalysisInput, UniversalAnalysis } from "@/lib/analysis/types";
 import {
   ANALYSIS_MODEL_CONFIG,
@@ -301,6 +301,9 @@ async function performConsistentAnalysis(
       if (!normalized.meta.date) {
         normalized.meta.date = new Date().toISOString().split("T")[0];
       }
+
+      // Zweiter Call: pädagogische Gesamtbewertung separat erzeugen.
+      normalized.teacherConclusion = await generateTeacherConclusion(normalized, input.subject);
 
       console.log(`[Konsistenz] Analyse erfolgreich nach ${attempt + 1} Versuch(en)`);
       return {

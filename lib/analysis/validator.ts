@@ -5,22 +5,27 @@ export interface ValidationResult {
   errors: string[];
 }
 
+/**
+ * Validiert die Rohantwort des Master-Analyse-Calls.
+ *
+ * Der Master-Call liefert jetzt nur noch tasks, strengths und nextSteps.
+ * Meta-Felder (maxPoints, achievedPoints, grade, studentName usw.) und
+ * teacherConclusion werden serverseitig ergänzt. Sie werden deshalb hier
+ * NICHT als required geprüft.
+ */
 export function validateAnalysis(analysis: any): ValidationResult {
   const errors: string[] = [];
 
-  // Meta-Validierung
-  if (!analysis.meta) {
-    errors.push('meta fehlt');
-  } else {
-    const meta = analysis.meta;
-    if (!meta.class) errors.push('meta.class fehlt');
-    if (!meta.subject) errors.push('meta.subject fehlt');
-    if (!meta.date) meta.date = 'unbekannt';
-    if (typeof meta.maxPoints !== 'number') errors.push('meta.maxPoints muss eine Zahl sein');
-    if (typeof meta.achievedPoints !== 'number') errors.push('meta.achievedPoints muss eine Zahl sein');
+  if (!analysis || typeof analysis !== 'object') {
+    errors.push('Analyse-Objekt fehlt oder ist ungültig');
+    return { isValid: false, errors };
   }
 
-  // Tasks-Validierung
+  // meta-Felder werden im Controller/Route serverseitig befüllt (siehe
+  // analysis.meta = analysis.meta || {} in app/api/analyze/route.ts).
+  // Hier daher keine required-Checks auf meta mehr.
+
+  // Tasks sind das einzige Pflichtfeld auf Struktur-Ebene
   if (!Array.isArray(analysis.tasks)) {
     errors.push('tasks muss ein Array sein');
   } else {
@@ -36,23 +41,20 @@ export function validateAnalysis(analysis: any): ValidationResult {
     });
   }
 
-  // Strengths & NextSteps
+  // strengths/nextSteps müssen Arrays sein, dürfen aber leer sein
   if (!Array.isArray(analysis.strengths)) errors.push('strengths muss ein Array sein');
   if (!Array.isArray(analysis.nextSteps)) errors.push('nextSteps muss ein Array sein');
 
-  // TeacherConclusion-Validierung
-  if (!analysis.teacherConclusion) {
-    errors.push('teacherConclusion fehlt');
-  } else {
+  // Auto-fix teacherConclusion, falls das Modell es trotzdem liefert
+  // (Kompatibilität mit älteren Prompts; required ist es NICHT mehr).
+  if (analysis.teacherConclusion && typeof analysis.teacherConclusion === 'object') {
     const tc = analysis.teacherConclusion;
-    if (!tc.summary) errors.push('teacherConclusion.summary fehlt');
-    // Auto-fix: Strings zu Arrays wrappen (GPT-4o gibt manchmal Strings statt Arrays)
     if (typeof tc.studentPatterns === 'string') tc.studentPatterns = [tc.studentPatterns];
     if (typeof tc.learningNeeds === 'string') tc.learningNeeds = [tc.learningNeeds];
     if (typeof tc.recommendedActions === 'string') tc.recommendedActions = [tc.recommendedActions];
-    if (!Array.isArray(tc.studentPatterns)) { tc.studentPatterns = []; }
-    if (!Array.isArray(tc.learningNeeds)) { tc.learningNeeds = []; }
-    if (!Array.isArray(tc.recommendedActions)) { tc.recommendedActions = []; }
+    if (!Array.isArray(tc.studentPatterns)) tc.studentPatterns = [];
+    if (!Array.isArray(tc.learningNeeds)) tc.learningNeeds = [];
+    if (!Array.isArray(tc.recommendedActions)) tc.recommendedActions = [];
   }
 
   return {
