@@ -14,6 +14,11 @@ export interface AnalysisQueueItem {
   fileName: string
   klausurText: string
   erwartungshorizont: string
+  subject?: string
+  studentName?: string
+  className?: string
+  gradeLevel?: string
+  schoolYear?: string
   correctionId: string
   status: AnalysisStatus
   error?: string
@@ -21,6 +26,11 @@ export interface AnalysisQueueItem {
   retryCount?: number
   httpStatus?: number
   fileKey?: string | null // File Key aus Supabase Storage
+  forceReanalysis?: boolean
+  klausurFileHash?: string | null
+  klausurTextHash?: string | null
+  erwartungshorizontFileHash?: string | null
+  erwartungshorizontHash?: string | null
 }
 
 interface UseAnalysisQueueOptions {
@@ -45,7 +55,6 @@ export function useAnalysisQueue({
   const [queue, setQueue] = useState<AnalysisQueueItem[]>([])
   const activeAnalysesRef = useRef<Set<string>>(new Set())
   const isProcessingRef = useRef(false)
-  const processedSessionIds = useRef<Set<string>>(new Set())
   // FIX: Store timeout IDs for cleanup
   const timeoutIdsRef = useRef<Set<NodeJS.Timeout>>(new Set())
 
@@ -83,13 +92,6 @@ export function useAnalysisQueue({
     ))
 
     try {
-      // SESSION-CACHE: Duplicate Request Blocker
-      if (processedSessionIds.current.has(pendingItem.id)) {
-        console.log(`[Session Cache] Duplicate Call für ${pendingItem.fileName} (ID: ${pendingItem.id}) blockiert.`)
-        return
-      }
-      processedSessionIds.current.add(pendingItem.id)
-
       // HARD GUARD: Prüfe direkt vor dem API-Call, ob Analyse übersprungen werden soll
       if (shouldSkipAnalysis) {
         const shouldSkip = await shouldSkipAnalysis(pendingItem)
@@ -136,7 +138,16 @@ export function useAnalysisQueue({
           body: JSON.stringify({
             klausurText: pendingItem.klausurText,
             erwartungshorizont: pendingItem.erwartungshorizont,
-            correctionId: pendingItem.correctionId
+            correctionId: pendingItem.correctionId,
+            subject: pendingItem.subject,
+            studentName: pendingItem.studentName,
+            className: pendingItem.className,
+            gradeLevel: pendingItem.gradeLevel,
+            schoolYear: pendingItem.schoolYear,
+            klausurFileHash: pendingItem.klausurFileHash,
+            klausurTextHash: pendingItem.klausurTextHash,
+            erwartungshorizontFileHash: pendingItem.erwartungshorizontFileHash,
+            erwartungshorizontHash: pendingItem.erwartungshorizontHash,
           })
         })
 
@@ -265,5 +276,3 @@ export function useAnalysisQueue({
     totalCount
   }
 }
-
-

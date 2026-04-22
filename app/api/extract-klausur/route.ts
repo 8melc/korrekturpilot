@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { extractHandwrittenPdfText } from '@/lib/handwritten-pdf';
 import { createClientFromRequest } from '@/lib/supabase/server';
 import { getCurrentUser } from '@/lib/auth';
+import { hashBytes, hashString, normalizeTextForConsistency } from '@/lib/consistency';
 
 // WICHTIG: Node.js Runtime für größere Dateien
 export const runtime = 'nodejs';
@@ -69,9 +70,10 @@ export async function POST(request: NextRequest) {
     // Konvertiere Blob zu Uint8Array
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
+    const fileHash = hashBytes(uint8);
 
     if (uint8.length === 0) {
-      return NextResponse.json({ error: 'Leere Datei' }, { status: 400 });
+      return NextResponse.json({ error: 'Leere Datei', fileHash }, { status: 400 });
     }
 
     console.log(`[${fileKey}] Datei geladen, Größe:`, uint8.length, 'bytes');
@@ -87,12 +89,15 @@ export async function POST(request: NextRequest) {
           text: '',
           filename: fileName,
           size: uint8.length,
+          fileHash,
         },
         { status: 200 } // 200 weil die Extraktion technisch erfolgreich war, nur leer
       );
     }
 
     console.log(`[${fileKey}] Handschrift-Extraktion erfolgreich:`, text.length, 'Zeichen');
+    const normalizedText = normalizeTextForConsistency(text);
+    const textHash = hashString(normalizedText);
 
     // Extrahiere Dateinamen aus fileKey (letzter Teil nach dem letzten /)
     const fileName = fileKey.split('/').pop() || fileKey;
@@ -100,6 +105,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         text,
+        textHash,
+        fileHash,
         filename: fileName,
         size: uint8.length,
       },

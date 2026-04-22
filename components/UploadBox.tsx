@@ -5,7 +5,9 @@ import { useRef } from 'react';
 export interface UploadedFile {
   id: string;
   fileName: string;
-  file: File;
+  file?: File;
+  fileKey?: string | null;
+  forceReanalysis?: boolean;
 }
 
 interface UploadBoxProps {

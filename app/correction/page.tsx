@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import UploadBox from '@/components/UploadBox'
@@ -18,10 +17,19 @@ import type { UploadedFile } from '@/components/UploadBox'
 import type { CourseInfo } from '@/types/results'
 import { getCurrentSchoolYear } from '@/lib/school-year'
 import {
+  getCachedExtraction,
+  hashBrowserFile,
+  storeCachedExtraction,
+} from '@/lib/extraction-cache'
+import {
   getUserFacingErrorMessage,
   normalizeStatusError,
   readApiErrorMessage,
 } from '@/lib/user-facing-errors'
+import {
+  RESTART_CORRECTION_STORAGE_KEY,
+  type RestartCorrectionPayload,
+} from '@/lib/restart-correction'
 
 const SUBJECT_OPTIONS = ['Mathematik', 'Deutsch', 'Englisch', 'Französisch', 'Spanisch', 'Latein', 'Chemie', 'Physik', 'Biologie', 'Geschichte', 'Geographie', 'Politik', 'Wirtschaft', 'Philosophie', 'Kunst', 'Musik', 'Sport', 'Informatik', 'Sonstiges']
 const GRADE_OPTIONS = ['5', '6', '7', '8', '9', '10', '11', '12', '13']
@@ -83,6 +91,15 @@ const updateStorageEntry = (id: string, patch: Partial<StoredResultEntry>) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
 }
 
+const removeStorageEntry = (id: string) => {
+  if (typeof window === 'undefined') return
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (!stored) return
+  const list: StoredResultEntry[] = JSON.parse(stored)
+  const next = list.filter(item => item.id !== id)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+}
+
 const appendToStorage = (entry: { id: string; studentName: string; status: string; fileName: string; course: CourseInfo; analysis?: any }) => {
   const stored = localStorage.getItem(STORAGE_KEY)
   const list: any[] = stored ? JSON.parse(stored) : []
@@ -133,12 +150,13 @@ const StepIndicator: React.FC<StepIndicatorProps> = ({ stepNumber, isComplete, i
 }
 
 export default function CorrectionPage() {
-  const router = useRouter()
   const [course, setCourse] = useState<CourseInfo>({ subject: '', gradeLevel: '', className: '', schoolYear: '' })
   const [uploads, setUploads] = useState<UploadedFile[]>([])
   const [expectationFileName, setExpectationFileName] = useState<string | null>(null)
   const [expectationFileKey, setExpectationFileKey] = useState<string | null>(null)
   const [expectationText, setExpectationText] = useState<string | null>(null)
+  const [expectationFileHash, setExpectationFileHash] = useState<string | null>(null)
+  const [expectationTextHash, setExpectationTextHash] = useState<string | null>(null)
   const [expectationError, setExpectationError] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [flowErrorMessage, setFlowErrorMessage] = useState<string | null>(null)
@@ -146,7 +164,7 @@ export default function CorrectionPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [hasAcceptedDataPrivacy, setHasAcceptedDataPrivacy] = useState(false)
   const [analysisStatusMessage, setAnalysisStatusMessage] = useState<string | null>(null)
-  const [results, setResults] = useState<Array<{ id: string; fileName: string; status: string }>>(() => readResults())
+  const [reanalysisDecisions, setReanalysisDecisions] = useState<Record<string, 'reanalyze' | 'skip' | undefined>>({})
   const [isLoaded, setIsLoaded] = useState(false)
 
   // ============================================================================
@@ -162,14 +180,29 @@ export default function CorrectionPage() {
   const savedCorrectionsRef = useRef<Set<string>>(new Set())
   const batchOutcomeHandledRef = useRef(false)
   const surfacedUploadErrorKeysRef = useRef<Set<string>>(new Set())
+  const reanalysisDecisionsRef = useRef<Record<string, 'reanalyze' | 'skip' | undefined>>({})
+  const pendingRestartAutostartRef = useRef<RestartCorrectionPayload | null>(null)
   
 
   const isCourseComplete = Boolean(course.subject && course.gradeLevel && course.className && course.schoolYear)
+  const alreadyAnalyzedUploadIds = new Set(
+    uploads
+      .filter((file) =>
+        !file.forceReanalysis &&
+        readResults().some((result) => result.fileName === file.fileName && result.status === 'Bereit')
+      )
+      .map((file) => file.id)
+  )
+  const selectedReanalysisCount = Object.entries(reanalysisDecisions).filter(
+    ([id, decision]) => alreadyAnalyzedUploadIds.has(id) && decision === 'reanalyze'
+  ).length
+  const unresolvedReanalysisCount = Array.from(alreadyAnalyzedUploadIds).filter(
+    (id) => !reanalysisDecisions[id]
+  ).length
 
   // Load results on mount and mark completed files
   useEffect(() => {
     const loadedResults = readResults()
-    setResults(loadedResults)
     
     // Mark all finished results in savedCorrectionsRef
     loadedResults.forEach((result) => {
@@ -243,45 +276,79 @@ export default function CorrectionPage() {
   const handleExpectationUpload = async (files: UploadedFile[]) => {
     if (!files.length) return
     const file = files[0]
+    if (!file.file) {
+      toast.error('Der Erwartungshorizont muss als neue PDF hochgeladen werden.')
+      return
+    }
     setExpectationError(null)
     setFlowErrorMessage(null)
     setErrorMessage(null)
 
     try {
+      const localFileHash = await hashBrowserFile(file.file)
       const fileKey = await uploadFileToStorage(file.file)
-      const extractResponse = await fetch('/api/extract-klausur', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileKey })
-      })
+      const cachedExtraction = getCachedExtraction(localFileHash)
 
-      if (!extractResponse.ok) {
-        throw new Error(
-          await readApiErrorMessage(
-            extractResponse,
-            'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
-          )
-        )
-      }
+      let extractedText: string
+      let extractedTextHash: string | null
+      let resolvedFileHash = localFileHash
 
-      const extracted = await extractResponse.json()
-      if (
-        extracted?.error ||
-        typeof extracted?.text !== 'string' ||
-        !extracted.text.trim()
-      ) {
-        throw new Error(
-          normalizeStatusError(
-            extractResponse.status,
-            typeof extracted?.error === 'string' ? extracted.error : '',
-            'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
+      if (cachedExtraction) {
+        extractedText = cachedExtraction.text
+        extractedTextHash = cachedExtraction.textHash
+      } else {
+        const extractResponse = await fetch('/api/extract-klausur', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileKey })
+        })
+
+        if (!extractResponse.ok) {
+          throw new Error(
+            await readApiErrorMessage(
+              extractResponse,
+              'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
+            )
           )
-        )
+        }
+
+        const extracted = await extractResponse.json()
+        if (
+          extracted?.error ||
+          typeof extracted?.text !== 'string' ||
+          !extracted.text.trim()
+        ) {
+          throw new Error(
+            normalizeStatusError(
+              extractResponse.status,
+              typeof extracted?.error === 'string' ? extracted.error : '',
+              'Der Erwartungshorizont konnte nicht verarbeitet werden. Bitte lade eine andere PDF hoch.'
+            )
+          )
+        }
+
+        extractedText = extracted.text.trim()
+        extractedTextHash =
+          typeof extracted?.textHash === 'string' ? extracted.textHash : null
+        resolvedFileHash =
+          typeof extracted?.fileHash === 'string' ? extracted.fileHash : localFileHash
+
+        if (extractedTextHash) {
+          storeCachedExtraction({
+            fileHash: resolvedFileHash,
+            fileName: file.fileName,
+            text: extractedText,
+            textHash: extractedTextHash,
+            updatedAt: new Date().toISOString(),
+          })
+        }
       }
 
       setExpectationFileName(file.fileName)
       setExpectationFileKey(fileKey)
-      setExpectationText(extracted.text.trim())
+      setExpectationText(extractedText)
+      setExpectationFileHash(resolvedFileHash)
+      setExpectationTextHash(extractedTextHash)
       setExpectationError(null)
       toast.success('Erwartungshorizont erfolgreich hochgeladen!')
     } catch (error) {
@@ -292,6 +359,8 @@ export default function CorrectionPage() {
       setExpectationText(null)
       setExpectationFileName(null)
       setExpectationFileKey(null)
+      setExpectationFileHash(null)
+      setExpectationTextHash(null)
       setHasAcceptedDataPrivacy(false)
       setExpectationError(message)
       toast.error(message)
@@ -308,8 +377,22 @@ export default function CorrectionPage() {
     setUploads(prev => prev.filter(file => file.id !== id))
     // Also remove from processedFilesRef if user manually removes before analysis
     processedFilesRef.current.delete(id)
+    setReanalysisDecisions((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      reanalysisDecisionsRef.current = next
+      return next
+    })
     surfacedUploadErrorKeysRef.current.forEach((key) => {
       if (key.startsWith(`${id}:`)) surfacedUploadErrorKeysRef.current.delete(key)
+    })
+  }
+
+  const handleSetReanalysisDecision = (id: string, decision: 'reanalyze' | 'skip') => {
+    setReanalysisDecisions((prev) => {
+      const next = { ...prev, [id]: decision }
+      reanalysisDecisionsRef.current = next
+      return next
     })
   }
 
@@ -339,6 +422,11 @@ export default function CorrectionPage() {
         setErrorMessage('Bitte vervollständige zuerst die Kursdaten.')
         return
       }
+      if (unresolvedReanalysisCount > 0) {
+        setErrorMessage('Bitte entscheide bei allen bereits analysierten Dateien, ob du sie erneut analysieren oder das vorhandene Ergebnis behalten möchtest.')
+        setFlowErrorMessage('Mindestens eine bereits analysierte Datei wartet noch auf deine Entscheidung. Ohne diese Auswahl wird keine Analyse gestartet.')
+        return
+      }
       if (expectationError) {
         setErrorMessage('Der Erwartungshorizont konnte noch nicht verarbeitet werden. Bitte behebe zuerst den Fehler in Schritt 2 und lade die PDF erneut hoch.')
         setFlowErrorMessage('Der Upload- oder Extraktionsfehler liegt beim Erwartungshorizont in Schritt 2. Die Datenschutz-Checkbox oder der Start-Button blockieren nicht das Weiterkommen.')
@@ -365,7 +453,6 @@ export default function CorrectionPage() {
       setAnalysisStatusMessage('Die Analyse wurde gestartet. Bitte diese Seite geöffnet lassen und nicht neu laden oder verlassen, bis die Auswertung abgeschlossen ist.')
 
     const currentResults = readResults()
-    setResults(currentResults)
 
     // ============================================================================
     // LAYER 1 + LAYER 3: PRE-FLIGHT CHECKS WITH SESSION GUARD
@@ -388,8 +475,16 @@ export default function CorrectionPage() {
       const alreadyDone = currentResults.some(
         (r) => r.fileName === file.fileName && r.status === 'Bereit'
       )
+      const forceReanalysis =
+        file.forceReanalysis || reanalysisDecisionsRef.current[file.id] === 'reanalyze'
 
       if (alreadyDone) {
+        if (forceReanalysis) {
+          console.log(
+            `[FORCE-REANALYZE] ${file.fileName} wurde bereits analysiert, wird aber bewusst erneut analysiert.`
+          )
+          return true
+        }
         console.log(
           `[STORAGE-GUARD] ${file.fileName} ist bereits fertig analysiert im Storage. SKIP.`
         )
@@ -434,7 +529,13 @@ export default function CorrectionPage() {
       return true
     })
 
-    if (filesToProcess.length === 0) {
+    const filesToProcessWithDecision = filesToProcess.map((file) => ({
+      file,
+      forceReanalysis:
+        file.forceReanalysis || reanalysisDecisionsRef.current[file.id] === 'reanalyze',
+    }))
+
+    if (filesToProcessWithDecision.length === 0) {
       console.log(
         '✅ Alle hochgeladenen Klausuren sind bereits analysiert – nichts Neues zu tun.'
       )
@@ -453,11 +554,15 @@ export default function CorrectionPage() {
         return
       }
 
-      setAnalysisStatusMessage(null)
-      // Check if we should redirect
-      if (results.length > 0) {
-          router.push('/results')
-      }
+      setAnalysisStatusMessage(
+        'Die ausgewählten Klausuren wurden bereits analysiert. Es wurde keine neue Analyse gestartet.'
+      )
+      setFlowErrorMessage(
+        selectedReanalysisCount === 0
+          ? 'Alle aktuell ausgewählten Dateien liegen bereits als fertige Ergebnisse vor. Bitte entscheide in der Dateiliste ausdrücklich, ob du diese Dateien erneut analysieren oder das vorhandene Ergebnis behalten möchtest.'
+          : 'Alle aktuell ausgewählten Dateien liegen bereits als fertige Ergebnisse vor. Wenn du eine neue Analyse möchtest, wähle dafür in der Liste ausdrücklich "Erneut analysieren (-1 Credit)".'
+      )
+      toast.info('Diese Klausuren wurden bereits analysiert.')
       return
     }
 
@@ -465,16 +570,27 @@ export default function CorrectionPage() {
     // MARK FILES AS PROCESSED IMMEDIATELY (BEFORE QUEUEING)
     // This prevents re-queueing on subsequent re-renders
     // ============================================================================
-    filesToProcess.forEach((file) => {
+    filesToProcessWithDecision.forEach(({ file }) => {
       processedFilesRef.current.add(file.id)
       console.log(`[SESSION-GUARD] Markiere ${file.fileName} (ID: ${file.id}) als verarbeitet.`)
     })
+    setReanalysisDecisions((prev) => {
+      const next = { ...prev }
+      filesToProcessWithDecision.forEach(({ file }) => delete next[file.id])
+      reanalysisDecisionsRef.current = next
+      return next
+    })
 
     // Add to upload queue (Layer 2 deduplication inside useUploadQueue)
-    uploadQueue.addToQueue(filesToProcess)
+    uploadQueue.addToQueue(
+      filesToProcessWithDecision.map(({ file, forceReanalysis }) => ({
+        ...file,
+        forceReanalysis,
+      }))
+    )
 
     // Create storage entries for new files
-    for (const file of filesToProcess) {
+    for (const { file } of filesToProcessWithDecision) {
       if (savedCorrectionsRef.current.has(file.id)) {
         continue
       }
@@ -514,6 +630,121 @@ export default function CorrectionPage() {
       toast.error(message)
     }
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('restart') !== '1') return
+
+    const rawPayload = localStorage.getItem(RESTART_CORRECTION_STORAGE_KEY)
+    if (!rawPayload) return
+
+    let payload: RestartCorrectionPayload | null = null
+    try {
+      payload = JSON.parse(rawPayload) as RestartCorrectionPayload
+    } catch (error) {
+      console.error('Fehler beim Lesen des Restart-Payloads:', error)
+    } finally {
+      localStorage.removeItem(RESTART_CORRECTION_STORAGE_KEY)
+      window.history.replaceState({}, '', '/correction')
+    }
+
+    if (!payload?.fileKey || !payload.expectationKey) {
+      setFlowErrorMessage('Die gespeicherten Quelldateien für den Neustart konnten nicht geladen werden.')
+      return
+    }
+
+    pendingRestartAutostartRef.current = payload
+
+    removeStorageEntry(payload.id)
+    processedFilesRef.current.delete(payload.id)
+    savedCorrectionsRef.current.delete(payload.id)
+    queuedAnalysesRef.current.delete(payload.id)
+    batchOutcomeHandledRef.current = false
+
+    setCourse(payload.course)
+    localStorage.setItem('courseContext', JSON.stringify(payload.course))
+    setUploads([
+      {
+        id: payload.id,
+        fileName: payload.fileName,
+        fileKey: payload.fileKey,
+        forceReanalysis: true,
+      },
+    ])
+    setExpectationFileKey(payload.expectationKey)
+    setExpectationFileName(payload.expectationFileName || 'Erwartungshorizont.pdf')
+    setExpectationText(null)
+    setExpectationError(null)
+    setFlowErrorMessage(null)
+    setErrorMessage(null)
+    setHasAcceptedDataPrivacy(true)
+    setAnalysisStatusMessage('Die Klausur wird mit den bereits gespeicherten PDFs komplett neu gestartet.')
+
+    ;(async () => {
+      try {
+        const extractResponse = await fetch('/api/extract-klausur', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileKey: payload.expectationKey }),
+        })
+
+        if (!extractResponse.ok) {
+          throw new Error(
+            await readApiErrorMessage(
+              extractResponse,
+              'Der gespeicherte Erwartungshorizont konnte für den Neustart nicht geladen werden.'
+            )
+          )
+        }
+
+        const extracted = await extractResponse.json()
+        if (
+          extracted?.error ||
+          typeof extracted?.text !== 'string' ||
+          !extracted.text.trim()
+        ) {
+          throw new Error(
+            normalizeStatusError(
+              extractResponse.status,
+              typeof extracted?.error === 'string' ? extracted.error : '',
+              'Der gespeicherte Erwartungshorizont konnte für den Neustart nicht geladen werden.'
+            )
+          )
+        }
+
+        setExpectationText(extracted.text.trim())
+        setExpectationFileHash(
+          typeof extracted?.fileHash === 'string' ? extracted.fileHash : null
+        )
+        setExpectationTextHash(
+          typeof extracted?.textHash === 'string' ? extracted.textHash : null
+        )
+        toast.info('Die gespeicherte Klausur wird jetzt erneut analysiert.')
+      } catch (error) {
+        pendingRestartAutostartRef.current = null
+        const message = getUserFacingErrorMessage(
+          error,
+          'Die gespeicherten Dateien konnten für den Neustart nicht geladen werden.'
+        )
+        setExpectationError(message)
+        setFlowErrorMessage(message)
+        toast.error(message)
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!pendingRestartAutostartRef.current) return
+    if (!expectationText?.trim()) return
+    if (uploads.length === 0) return
+    if (!hasAcceptedDataPrivacy) return
+    if (!isLoaded) return
+
+    pendingRestartAutostartRef.current = null
+    void handleStartAnalysis()
+  }, [expectationText, uploads.length, hasAcceptedDataPrivacy, isLoaded])
 
   const uploadFileToStorage = async (file: File): Promise<string | null> => {
     const MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -588,7 +819,7 @@ export default function CorrectionPage() {
       const alreadyDone = currentResults.some(
         (r) => r.fileName === item.fileName && r.status === 'Bereit'
       )
-      if (alreadyDone) {
+      if (alreadyDone && !item.forceReanalysis) {
         console.log(
           `[EXTRACT-GUARD] ${item.fileName} ist bereits im Storage als 'Bereit'. SKIP Analyse.`
         )
@@ -630,7 +861,7 @@ export default function CorrectionPage() {
         }
       }
       
-      uploadQueue.updateItem(item.id, { status: 'analyzing', progress: 80 })
+      uploadQueue.updateItem(item.id, { status: 'analyzing', progress: 72 })
       
       queuedAnalysesRef.current.add(item.id)
       
@@ -639,9 +870,19 @@ export default function CorrectionPage() {
         fileName: item.fileName,
         klausurText: text.trim(),
         erwartungshorizont: expectationText.trim(),
+        subject: course.subject,
+        studentName: item.fileName.replace('.pdf', ''),
+        className: course.className,
+        gradeLevel: course.gradeLevel,
+        schoolYear: course.schoolYear,
         correctionId: item.id,
         status: 'pending',
-        fileKey: item.fileKey ?? null
+        fileKey: item.fileKey ?? null,
+        forceReanalysis: item.forceReanalysis,
+        klausurFileHash: item.fileHash ?? null,
+        klausurTextHash: item.textHash ?? null,
+        erwartungshorizontFileHash: expectationFileHash ?? null,
+        erwartungshorizontHash: expectationTextHash ?? null,
       }])
     }
   })
@@ -649,9 +890,13 @@ export default function CorrectionPage() {
   const analysisQueue = useAnalysisQueue({
     maxConcurrent: 5,
     getStoredResult: (item) => {
+      if (item.forceReanalysis) return null
       return getStoredResult(item.correctionId)
     },
     shouldSkipAnalysis: (item) => {
+      if (item.forceReanalysis) {
+        return false
+      }
       if (savedCorrectionsRef.current.has(item.correctionId)) {
         console.log(
           `[ANALYSIS-GUARD] ${item.fileName} (ID: ${item.correctionId}) ist bereits in savedCorrectionsRef. SKIP API-Call.`
@@ -756,6 +1001,30 @@ export default function CorrectionPage() {
       toast.error(`${item.fileName}: ${item.error}`)
     })
   }, [uploadQueue.queue])
+
+  useEffect(() => {
+    const activeAnalysisIds = new Set(
+      analysisQueue.queue
+        .filter((item) => ['pending', 'analyzing'].includes(item.status))
+        .map((item) => item.id)
+    )
+
+    if (activeAnalysisIds.size === 0) return
+
+    const intervalId = window.setInterval(() => {
+      uploadQueue.queue.forEach((item) => {
+        if (!activeAnalysisIds.has(item.id)) return
+        if (item.status !== 'analyzing') return
+        if (item.progress >= 94) return
+
+        uploadQueue.updateItem(item.id, {
+          progress: Math.min(item.progress + 3, 94),
+        })
+      })
+    }, 800)
+
+    return () => window.clearInterval(intervalId)
+  }, [analysisQueue.queue, uploadQueue.queue, uploadQueue.updateItem])
 
   // ========================================================================
   // FINALER REDIRECT: HARD FORCE
@@ -1114,8 +1383,47 @@ export default function CorrectionPage() {
                     </svg>
                     <span>{uploads.length} {uploads.length === 1 ? 'Arbeit wurde hochgeladen' : 'Arbeiten wurden hochgeladen'}</span>
                   </div>
+                  {alreadyAnalyzedUploadIds.size > 0 && (
+                    <div
+                      style={{
+                        marginTop: 'var(--spacing-lg)',
+                        padding: 'var(--spacing-md)',
+                        background: 'var(--color-info-light)',
+                        border: '1px solid var(--color-primary)',
+                        borderRadius: 'var(--radius-lg)',
+                        color: 'var(--color-gray-800)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 'var(--spacing-xs)',
+                      }}
+                    >
+                      <strong>Bereits analysierte Dateien erkannt</strong>
+                      <span>
+                        {alreadyAnalyzedUploadIds.size} Datei{alreadyAnalyzedUploadIds.size === 1 ? '' : 'en'} aus deiner Auswahl liegen bereits als fertige Ergebnisse vor.
+                      </span>
+                      <span>
+                        Du musst für jede dieser Dateien unten ausdrücklich entscheiden, ob sie erneut analysiert oder übersprungen werden soll. Pro erneut analysierter Datei wird 1 Credit verbraucht.
+                      </span>
+                      {unresolvedReanalysisCount > 0 && (
+                        <span style={{ color: 'var(--color-error-dark)', fontWeight: 600 }}>
+                          Offen: {unresolvedReanalysisCount} Entscheidung{unresolvedReanalysisCount === 1 ? '' : 'en'} erforderlich, bevor die Analyse gestartet werden kann.
+                        </span>
+                      )}
+                      {selectedReanalysisCount > 0 && (
+                        <span>
+                          Aktuell ausgewählt für erneute Analyse: {selectedReanalysisCount} Datei{selectedReanalysisCount === 1 ? '' : 'en'}.
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div style={{ marginTop: 'var(--spacing-lg)' }}>
-                    <UploadedFilesList files={uploads} onRemove={handleRemoveUpload} />
+                    <UploadedFilesList
+                      files={uploads}
+                      onRemove={handleRemoveUpload}
+                      reanalyzableIds={alreadyAnalyzedUploadIds}
+                      reanalysisDecisions={reanalysisDecisions}
+                      onSetReanalysisDecision={handleSetReanalysisDecision}
+                    />
                   </div>
                 </>
               )}
@@ -1239,7 +1547,7 @@ export default function CorrectionPage() {
           buttonText="Analyse starten"
           onStart={handleStartAnalysis}
           disabled={
-            (!isCourseComplete || !expectationText || !hasAcceptedDataPrivacy || uploads.length === 0) || 
+            (!isCourseComplete || !expectationText || !hasAcceptedDataPrivacy || uploads.length === 0 || unresolvedReanalysisCount > 0) || 
             isAnalyzing
           }
           isAnalyzing={isAnalyzing}

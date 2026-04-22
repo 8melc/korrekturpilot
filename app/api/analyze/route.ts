@@ -13,14 +13,20 @@ import { getGradeInfo, getPerformanceLevel } from "@/lib/grades";
 import { extractGradeLevelFromClassName } from "@/lib/analysis/controller";
 import type { MasterAnalysisInput, UniversalAnalysis } from "@/lib/analysis/types";
 import {
+  ANALYSIS_MODEL_CONFIG,
+  buildAnalysisInputHash,
+  buildPromptHash,
+  createAnalysisAudit,
   generateDeterministicSeed,
+  hashString,
+  normalizeTextForConsistency,
   validateAnalysisOutput,
 } from "@/lib/consistency";
 import { mapToKlausurAnalyse } from "@/lib/analysis/mapper";
 
 // Konstanten für Konsistenz
 const MAX_VALIDATION_RETRIES = 3;
-const MODEL = "gpt-4o"; // Upgrade von gpt-4o-mini
+const MODEL = ANALYSIS_MODEL_CONFIG.model;
 
 type UserRow = { credits: number };
 
@@ -30,6 +36,67 @@ type CorrectionRow = {
   analysis: any | null;
   student_name: string | null;
 };
+
+type AnalyzeRequestBody = {
+  klausurText?: string;
+  erwartungshorizont?: string;
+  subject?: string;
+  studentName?: string;
+  className?: string;
+  gradeLevel?: string;
+  schoolYear?: string;
+  correctionId?: string;
+  klausurFileHash?: string;
+  klausurTextHash?: string;
+  erwartungshorizontFileHash?: string;
+  erwartungshorizontHash?: string;
+};
+
+type AnalysisExecutionResult = {
+  analysis: UniversalAnalysis;
+  systemFingerprint?: string | null;
+  attemptCount: number;
+};
+
+function buildConsistentPromptBundle(input: MasterAnalysisInput) {
+  const prompt = buildMasterAnalysisPrompt(input);
+  const strictPointsInstruction = `\n\nKRITISCH - PUNKTEVERGABE:
+- Bewerte die SCHÜLERANTWORTEN anhand des Erwartungshorizonts
+- Vergleiche jede Schülerantwort mit der Musterlösung und vergib Punkte für korrekte Inhalte
+- Die MAXIMALPUNKTZAHL pro Aufgabe ergibt sich aus dem Erwartungshorizont
+- Vergib Teilpunkte, wenn die Antwort teilweise korrekt ist
+- Vergib 0 Punkte NUR wenn die Antwort komplett fehlt oder komplett falsch ist
+- Wenn ein Schüler etwas Richtiges geschrieben hat, MUSS er dafür Punkte bekommen`;
+
+  const systemPrompt = `${MASTER_ANALYSIS_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_ENFORCEMENT}${strictPointsInstruction}`;
+
+  return { prompt, systemPrompt };
+}
+
+async function consumeOneCredit(userId: string, supabase: ReturnType<typeof createClientFromRequest>) {
+  let creditDeducted = false;
+  const { error: creditError } = await executeWithRetry(async (client) => {
+    const sb = client ?? supabase;
+    return await sb.rpc("add_credits", {
+      user_id: userId,
+      amount: -1,
+    });
+  }, supabase);
+
+  if (creditError) {
+    if (isJWTExpiredError(creditError)) {
+      console.warn(
+        "[Konsistenz] Session expired after analysis, but analysis was successful"
+      );
+    } else {
+      console.error("[Konsistenz] Fehler beim Verbrauchen des Credits:", creditError);
+    }
+  } else {
+    creditDeducted = true;
+  }
+
+  return creditDeducted;
+}
 
 /**
  * Berechnet geschätzte Kosten basierend auf Token-Usage
@@ -64,19 +131,11 @@ function calculateCost(
 async function performConsistentAnalysis(
   input: MasterAnalysisInput,
   seed: number,
-): Promise<UniversalAnalysis> {
+  promptBundle: ReturnType<typeof buildConsistentPromptBundle>,
+): Promise<AnalysisExecutionResult> {
   const openai = getOpenAIClient();
 
-  const prompt = buildMasterAnalysisPrompt(input);
-  const strictPointsInstruction = `\n\nKRITISCH - PUNKTEVERGABE:
-- Bewerte die SCHÜLERANTWORTEN anhand des Erwartungshorizonts
-- Vergleiche jede Schülerantwort mit der Musterlösung und vergib Punkte für korrekte Inhalte
-- Die MAXIMALPUNKTZAHL pro Aufgabe ergibt sich aus dem Erwartungshorizont
-- Vergib Teilpunkte, wenn die Antwort teilweise korrekt ist
-- Vergib 0 Punkte NUR wenn die Antwort komplett fehlt oder komplett falsch ist
-- Wenn ein Schüler etwas Richtiges geschrieben hat, MUSS er dafür Punkte bekommen`;
-
-  const systemPrompt = `${MASTER_ANALYSIS_SYSTEM_PROMPT}\n\n${JSON_SCHEMA_ENFORCEMENT}${strictPointsInstruction}`;
+  const { prompt, systemPrompt } = promptBundle;
 
   let lastError: Error | null = null;
   let lastValidationErrors: string[] = [];
@@ -100,8 +159,8 @@ async function performConsistentAnalysis(
             content: prompt,
           },
         ],
-        temperature: 0.0, // Maximal deterministisch
-        top_p: 1, // Standard (bei temp 0 irrelevant, aber explizit)
+        temperature: ANALYSIS_MODEL_CONFIG.temperature, // Maximal deterministisch
+        top_p: ANALYSIS_MODEL_CONFIG.topP, // Standard (bei temp 0 irrelevant, aber explizit)
         seed: seed, // Deterministischer Seed
         response_format: { type: "json_object" },
         max_tokens: 16384,
@@ -230,7 +289,11 @@ async function performConsistentAnalysis(
       }
 
       console.log(`[Konsistenz] Analyse erfolgreich nach ${attempt + 1} Versuch(en)`);
-      return normalized;
+      return {
+        analysis: normalized,
+        systemFingerprint: response.system_fingerprint ?? null,
+        attemptCount: attempt + 1,
+      };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       console.error(`[Konsistenz] Fehler (Versuch ${attempt + 1}):`, {
@@ -271,7 +334,7 @@ export async function POST(request: NextRequest) {
   const supabase = createClientFromRequest(request);
 
   // 2. Body EINMAL lesen
-  let body: any;
+  let body: AnalyzeRequestBody;
   try {
     body = await request.json();
   } catch {
@@ -287,7 +350,13 @@ export async function POST(request: NextRequest) {
     subject,
     studentName,
     className,
+    gradeLevel,
+    schoolYear,
     correctionId,
+    klausurFileHash,
+    klausurTextHash,
+    erwartungshorizontFileHash,
+    erwartungshorizontHash,
   } = body ?? {};
 
   // 3. RESULT FREEZING – nie doppelt analysieren
@@ -432,38 +501,149 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 6. Deterministischen Seed generieren
-    const effectiveStudentName =
-      studentName || correctionData?.student_name || "unknown";
+    // 6. Stabile Analyse-Signatur erzeugen
+    const anonymizedStudentLabel = undefined;
     const effectiveCorrectionId = correctionId || `temp_${Date.now()}`;
+    const normalizedKlausurText = normalizeTextForConsistency(klausurText);
+    const normalizedErwartungshorizont = normalizeTextForConsistency(erwartungshorizont);
 
-    const deterministicSeed = generateDeterministicSeed(
-      effectiveCorrectionId,
-      effectiveStudentName
-    );
-
-    console.log("[Konsistenz] Starte Analyse...", {
-      klausurTextLength: klausurText.length,
-      erwartungshorizontLength: erwartungshorizont.length,
-      model: MODEL,
-      seed: deterministicSeed,
-      studentName: effectiveStudentName,
-      correctionId: effectiveCorrectionId,
-    });
-
-    // 8. Analyse durchführen (mit Validation und Retry)
-        const input: MasterAnalysisInput = {
-          klausurText,
-          erwartungshorizont,
-          subject,
-      studentName: effectiveStudentName,
-          className,
+    const input: MasterAnalysisInput = {
+      klausurText: normalizedKlausurText,
+      erwartungshorizont: normalizedErwartungshorizont,
+      subject,
+      className,
     };
 
-    const analysis = await performConsistentAnalysis(
+    const promptBundle = buildConsistentPromptBundle(input);
+    const analysisInputHash = buildAnalysisInputHash({
+      klausurText: normalizedKlausurText,
+      erwartungshorizont: normalizedErwartungshorizont,
+      subject,
+      studentName: anonymizedStudentLabel,
+      className,
+      gradeLevel,
+      schoolYear,
+    });
+    const systemPromptHash = hashString(promptBundle.systemPrompt);
+    const promptHash = buildPromptHash({
+      systemPrompt: promptBundle.systemPrompt,
+      prompt: promptBundle.prompt,
+      model: MODEL,
+      temperature: ANALYSIS_MODEL_CONFIG.temperature,
+      topP: ANALYSIS_MODEL_CONFIG.topP,
+    });
+    const deterministicSeed = generateDeterministicSeed(promptHash);
+    const effectiveKlausurTextHash = klausurTextHash || hashString(normalizedKlausurText);
+    const effectiveErwartungshorizontHash =
+      erwartungshorizontHash || hashString(normalizedErwartungshorizont);
+
+    let reusableAnalysisRow: CorrectionRow | null = null;
+    const { data: completedCorrections, error: completedCorrectionsError } =
+      await executeWithRetry<CorrectionRow[]>(async (client) => {
+        const sb = client ?? supabase;
+        return await sb
+          .from("corrections")
+          .select("id,status,analysis,student_name")
+          .eq("user_id", user.id)
+          .eq("status", "completed")
+          .not("analysis", "is", null);
+      }, supabase);
+
+    if (completedCorrectionsError) {
+      console.warn(
+        "[Konsistenz] Fehler beim Suchen identischer Analysen:",
+        completedCorrectionsError
+      );
+    } else {
+      reusableAnalysisRow =
+        completedCorrections?.find((row) => {
+          if (!row.analysis || row.id === effectiveCorrectionId) return false;
+
+          const storedAudit = row.analysis?._audit;
+          return (
+            storedAudit?.analysisInputHash === analysisInputHash &&
+            storedAudit?.promptHash === promptHash &&
+            storedAudit?.model === MODEL
+          );
+        }) ?? null;
+    }
+
+    console.log("[Konsistenz] Starte Analyse...", {
+      klausurTextLength: normalizedKlausurText.length,
+      erwartungshorizontLength: normalizedErwartungshorizont.length,
+      model: MODEL,
+      seed: deterministicSeed,
+      correctionId: effectiveCorrectionId,
+      analysisInputHash,
+      promptHash,
+      reusedFromCorrectionId: reusableAnalysisRow?.id ?? null,
+    });
+
+    let analysis: UniversalAnalysis;
+    let systemFingerprint: string | null | undefined = null;
+    let attemptCount = 0;
+
+    if (reusableAnalysisRow?.analysis) {
+      console.log(
+        "[Konsistenz] Identischer Analyse-Input gefunden, verwende gespeichertes Ergebnis erneut:",
+        reusableAnalysisRow.id
+      );
+      const existingAnalysis = reusableAnalysisRow.analysis;
+      const audit = createAnalysisAudit({
+        analysisInputHash,
+        klausurTextHash: effectiveKlausurTextHash,
+        erwartungshorizontHash: effectiveErwartungshorizontHash,
+        promptHash,
+        systemPromptHash,
+        seed: deterministicSeed,
+        model: MODEL,
+        temperature: ANALYSIS_MODEL_CONFIG.temperature,
+        topP: ANALYSIS_MODEL_CONFIG.topP,
+        klausurFileHash: klausurFileHash ?? null,
+        erwartungshorizontFileHash: erwartungshorizontFileHash ?? null,
+        sourceCorrectionId: effectiveCorrectionId,
+        reusedFromCorrectionId: reusableAnalysisRow.id,
+      });
+
+      const klausurAnalyse = {
+        ...existingAnalysis,
+        _audit: audit,
+      };
+
+      const creditUsed = await consumeOneCredit(user.id, supabase);
+      const { data: updatedUser } = await executeWithRetry<UserRow | null>(async (client) => {
+        const sb = client ?? supabase;
+        return await sb
+          .from("users")
+          .select("credits")
+          .eq("id", user.id)
+          .single();
+      }, supabase);
+
+      return NextResponse.json({
+        ...klausurAnalyse,
+        credits: updatedUser?.credits ?? userData.credits,
+        creditUsed,
+        reused: true,
+        _consistency: {
+          model: MODEL,
+          seed: deterministicSeed,
+          analysisInputHash,
+          promptHash,
+          reusedFromCorrectionId: reusableAnalysisRow.id,
+        },
+      });
+    }
+
+    // 8. Analyse durchführen (mit Validation und Retry)
+    const analysisResult = await performConsistentAnalysis(
       input,
       deterministicSeed,
+      promptBundle,
     );
+    analysis = analysisResult.analysis;
+    systemFingerprint = analysisResult.systemFingerprint;
+    attemptCount = analysisResult.attemptCount;
 
     // 9. Logging
     const aufgabenAnzahl = analysis.tasks?.length ?? 0;
@@ -479,26 +659,7 @@ export async function POST(request: NextRequest) {
     });
 
     // 10. Credits NUR JETZT, nach Erfolg, einmalig abziehen
-    let creditDeducted = false;
-    const { error: creditError } = await executeWithRetry(async (client) => {
-      const sb = client ?? supabase;
-      return await sb.rpc("add_credits", {
-        user_id: user.id,
-        amount: -1,
-      });
-    }, supabase);
-
-    if (creditError) {
-      if (isJWTExpiredError(creditError)) {
-        console.warn(
-          "[Konsistenz] Session expired after analysis, but analysis was successful"
-        );
-      } else {
-        console.error("[Konsistenz] Fehler beim Verbrauchen des Credits:", creditError);
-      }
-    } else {
-      creditDeducted = true;
-    }
+    const creditDeducted = await consumeOneCredit(user.id, supabase);
 
     // 11. Aktuelle Credits holen
     const { data: updatedUser, error: updatedError } =
@@ -515,7 +676,23 @@ export async function POST(request: NextRequest) {
       !updatedError && updatedUser ? updatedUser.credits : userData.credits;
 
     // Mappe UniversalAnalysis → KlausurAnalyse für die UI-Kompatibilität
-    const klausurAnalyse = mapToKlausurAnalyse(analysis);
+    const klausurAnalyse = {
+      ...mapToKlausurAnalyse(analysis),
+      _audit: createAnalysisAudit({
+        analysisInputHash,
+        klausurTextHash: effectiveKlausurTextHash,
+        erwartungshorizontHash: effectiveErwartungshorizontHash,
+        promptHash,
+        systemPromptHash,
+        seed: deterministicSeed,
+        model: MODEL,
+        temperature: ANALYSIS_MODEL_CONFIG.temperature,
+        topP: ANALYSIS_MODEL_CONFIG.topP,
+        klausurFileHash: klausurFileHash ?? null,
+        erwartungshorizontFileHash: erwartungshorizontFileHash ?? null,
+        sourceCorrectionId: effectiveCorrectionId,
+      }),
+    };
 
     return NextResponse.json({
       ...klausurAnalyse,
@@ -525,6 +702,13 @@ export async function POST(request: NextRequest) {
         model: MODEL,
         seed: deterministicSeed,
         actualTaskCount: aufgabenAnzahl,
+        analysisInputHash,
+        promptHash,
+        systemPromptHash,
+        klausurTextHash: effectiveKlausurTextHash,
+        erwartungshorizontHash: effectiveErwartungshorizontHash,
+        attempts: attemptCount,
+        systemFingerprint,
       },
     });
   } catch (error: any) {

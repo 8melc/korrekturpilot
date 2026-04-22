@@ -43,7 +43,11 @@ export default function ResultCompactView({ entry, onShowDetails, onShowPreview 
         setTeacherView(view);
 
         // Cache-Key erstellen
-        const cacheKey = `teacher-summary-${entry.id}-${view.tasks.length}-${view.overall.percentage}`;
+        const manualOverrideVersion =
+          typeof analysis._manualOverride?.version === 'number'
+            ? analysis._manualOverride.version
+            : analysis._manualOverride?.editedAt || 'original';
+        const cacheKey = `teacher-summary-${entry.id}-${view.tasks.length}-${view.overall.percentage}-${manualOverrideVersion}`;
 
         // Prüfe localStorage für gecachte Summary
         if (typeof window !== 'undefined') {

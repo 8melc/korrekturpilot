@@ -68,6 +68,15 @@ export interface KlausurAnalyse {
     korrekturen: string[];
   }>;
   zusammenfassung: string;
+  _audit?: Record<string, unknown>;
+  _consistency?: Record<string, unknown>;
+  _manualOverride?: {
+    edited: boolean;
+    editedAt: string;
+    version?: number;
+  };
+  reused?: boolean;
+  creditUsed?: boolean;
 }
 
 export async function analyzeKlausur(

@@ -28,6 +28,39 @@ interface SaveCorrectionRequest {
   expectationUrl?: string | null;
 }
 
+interface PatchCorrectionRequest {
+  id: string;
+  analysis?: KlausurAnalyse | null;
+  status?: ResultStatus;
+}
+
+interface ExistingCorrectionRow {
+  id: string;
+  file_key?: string | null;
+  expectation_key?: string | null;
+  status?: string | null;
+  analysis?: KlausurAnalyse | null;
+}
+
+async function loadExistingCorrection(
+  supabase: ReturnType<typeof createClientFromRequest>,
+  userId: string,
+  id: string
+) {
+  return await executeWithRetry<ExistingCorrectionRow>(
+    async (client) => {
+      const sb = client ?? supabase;
+      return await sb
+        .from('corrections')
+        .select('id,file_key,expectation_key,status,analysis')
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+    },
+    supabase
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = createClientFromRequest(request);
@@ -153,42 +186,159 @@ export async function DELETE(request: NextRequest) {
     const { id, deleteAll } = body as { id?: string; deleteAll?: boolean };
 
     if (deleteAll) {
-      const { data, error } = await supabase
+      const { count, error: countError } = await supabase
+        .from('corrections')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+
+      if (countError) {
+        console.error('DELETE /api/corrections deleteAll count error', countError);
+        return NextResponse.json({ error: 'Delete all failed' }, { status: 500 });
+      }
+
+      const { error } = await supabase
         .from('corrections')
         .delete()
-        .eq('user_id', user.id)
-        .select('id');
+        .eq('user_id', user.id);
 
       if (error) {
         console.error('DELETE /api/corrections deleteAll error', error);
         return NextResponse.json({ error: 'Delete all failed' }, { status: 500 });
       }
 
-      const deletedCount = data?.length ?? 0;
-      return NextResponse.json({ success: true, deletedCount });
+      return NextResponse.json({ success: true, deletedCount: count ?? 0 });
     }
 
     if (!id) {
       return NextResponse.json({ error: 'Missing id' }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    const { data: existing, error: existingError } = await loadExistingCorrection(
+      supabase,
+      user.id,
+      id
+    );
+
+    if (existingError) {
+      if (isJWTExpiredError(existingError)) {
+        return NextResponse.json(
+          { error: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.' },
+          { status: 401 }
+        );
+      }
+      console.error('DELETE /api/corrections lookup error', existingError);
+      return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
+    }
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    const { error } = await supabase
       .from('corrections')
       .delete()
-      .match({ id, user_id: user.id })
-      .select('id');
+      .match({ id, user_id: user.id });
 
     if (error) {
       console.error('DELETE /api/corrections single delete error', error);
       return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
-    }    const deletedCount = data?.length ?? 0;
-    if (deletedCount === 0) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }    return NextResponse.json({ success: true, deletedCount });
+    }
+
+    return NextResponse.json({ success: true, deletedCount: 1 });
   } catch (error: any) {
     console.error('Error deleting correction(s):', error);
     return NextResponse.json(
       { error: 'Fehler beim Löschen der Korrektur(en)', details: error?.message },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const supabase = createClientFromRequest(request);
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Nicht authentifiziert' }, { status: 401 });
+    }
+
+    const body: PatchCorrectionRequest = await request.json();
+
+    if (!body.id) {
+      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+    }
+
+    const updates: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if ('analysis' in body) {
+      updates.analysis = body.analysis ?? null;
+    }
+    if (body.status) {
+      updates.status = mapStatusToDb(body.status);
+    }
+
+    const { data: existing, error: existingError } = await loadExistingCorrection(
+      supabase,
+      user.id,
+      body.id
+    );
+
+    if (existingError) {
+      if (isJWTExpiredError(existingError)) {
+        return NextResponse.json(
+          { error: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.' },
+          { status: 401 }
+        );
+      }
+      console.error('PATCH /api/corrections lookup error:', existingError);
+      return NextResponse.json({ error: 'Update failed' }, { status: 500 });
+    }
+
+    if (!existing) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    const { error } = await executeWithRetry(
+      async (client) => {
+        const sb = client ?? supabase;
+        return await sb
+          .from('corrections')
+          .update(updates)
+          .eq('id', body.id)
+          .eq('user_id', user.id);
+      },
+      supabase
+    );
+
+    if (error) {
+      if (isJWTExpiredError(error)) {
+        return NextResponse.json(
+          { error: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.' },
+          { status: 401 }
+        );
+      }
+      console.error('PATCH /api/corrections update error:', error);
+      return NextResponse.json({ error: 'Update failed' }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      correction: {
+        id: body.id,
+        status: body.status ? mapStatusToDb(body.status) : existing.status ?? null,
+        analysis: 'analysis' in body ? body.analysis ?? null : existing.analysis ?? null,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error patching correction:', error);
+    return NextResponse.json(
+      { error: 'Fehler beim Aktualisieren der Korrektur', details: error?.message },
       { status: 500 }
     );
   }

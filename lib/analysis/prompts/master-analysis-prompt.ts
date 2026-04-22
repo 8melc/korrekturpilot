@@ -53,6 +53,7 @@ Erzeuge ein vollständiges Analyseobjekt im folgenden JSON-Schema:
 REGELN:
 - Die JSON-Struktur darf NICHT verändert werden.
 - **KRITISCH: Das Feld "points" MUSS IMMER im Format "X/Y" sein (erreichte Punkte / maximale Punkte), z.B. "3/5", "0/4", "8/10". NIEMALS nur eine Zahl wie "3" verwenden!**
+- **DATENSCHUTZ: Übernimm oder erfinde KEINE echten Namen. Wenn kein anonymes Label vorgegeben ist, lasse meta.studentName leer.**
 
 **KRITISCH - AUFGABEN-MAPPING VOR BEWERTUNG:**
 - Prüfe ZUERST: Handelt es sich um die Vollversion oder eine differenzierte/gekürzte Version der Klausur?
@@ -207,10 +208,11 @@ VERBINDLICHE REGELN:
 3. Bei differenzierten/gekürzten Klausuren: Mappe Schülerantworten inhaltlich auf den Erwartungshorizont
 4. Verwende die universelle JSON-Struktur exakt wie vorgegeben
 5. **KRITISCH: "points" MUSS IMMER im Format "X/Y" sein (z.B. "3/5", "0/4"). NIEMALS nur eine Zahl!**
-6. meta.maxPoints = Summe nur der tatsächlich bewerteten Aufgaben
-5. Alle Textfelder müssen vollständige Sätze enthalten
-6. Passe den Detailgrad an die erreichte Punktzahl an
-7. Erfinde keine Inhalte - nur was aus Erwartungshorizont und Schülerantwort ableitbar ist
+6. **DATENSCHUTZ: Niemals echte Namen aus der Klausur oder dem Dateinamen in meta.studentName übernehmen oder rekonstruieren. Wenn kein anonymes Label vorliegt, Feld leer lassen.**
+7. meta.maxPoints = Summe nur der tatsächlich bewerteten Aufgaben
+8. Alle Textfelder müssen vollständige Sätze enthalten
+9. Passe den Detailgrad an die erreichte Punktzahl an
+10. Erfinde keine Inhalte - nur was aus Erwartungshorizont und Schülerantwort ableitbar ist
 
 WICHTIG - SPRACHQUALITÄT:
 - Formuliere ALLE Rückmeldungen in perfektem, grammatikalisch korrektem Deutsch

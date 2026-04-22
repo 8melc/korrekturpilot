@@ -6,6 +6,11 @@ import {
   normalizeStatusError,
   readApiErrorMessage,
 } from '@/lib/user-facing-errors'
+import {
+  getCachedExtraction,
+  hashBrowserFile,
+  storeCachedExtraction,
+} from '@/lib/extraction-cache'
 
 export interface QueueItem {
   id: string
@@ -14,16 +19,65 @@ export interface QueueItem {
   status: 'pending' | 'uploading' | 'extracting' | 'analyzing' | 'completed' | 'error' | 'errorfinal'
   progress: number
   error?: string
+  forceReanalysis?: boolean
   // Zusätzliche Felder für die Analyse
   correctionId?: string 
   klausurText?: string
   erwartungshorizont?: string
   fileKey?: string | null // File Key aus Supabase Storage
+  fileHash?: string | null
+  textHash?: string | null
 }
 
 interface UseUploadQueueProps {
   maxConcurrent?: number
   onExtractComplete?: (item: QueueItem, text: string) => Promise<void>
+}
+
+function uploadFileWithProgress(
+  uploadUrl: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+
+    xhr.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable) return
+      const percent = Math.round((event.loaded / event.total) * 100)
+      onProgress(percent)
+    })
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100)
+        resolve()
+        return
+      }
+
+      reject(
+        new Error(
+          normalizeStatusError(
+            xhr.status,
+            '',
+            'Der Upload der Datei ist fehlgeschlagen. Bitte versuche es erneut.'
+          )
+        )
+      )
+    })
+
+    xhr.addEventListener('error', () => {
+      reject(
+        new Error(
+          'Netzwerkfehler. Bitte prüfe deine Internetverbindung und versuche es erneut.'
+        )
+      )
+    })
+
+    xhr.open('PUT', uploadUrl)
+    xhr.setRequestHeader('Content-Type', file.type)
+    xhr.send(file)
+  })
 }
 
 export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUploadQueueProps) {
@@ -89,7 +143,7 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
 
       // 3. Starte Verarbeitung
       setActiveCount(prev => prev + 1)
-      updateItem(nextItem.id, { status: 'uploading', progress: 1 })
+      updateItem(nextItem.id, { status: 'uploading', progress: 5 })
 
       try {
         // A) Upload Simulation / Logik
@@ -97,12 +151,12 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
         if (!nextItem.file) {
             // Falls kein File-Objekt da ist (z.B. nur ID übergeben), überspringen wir direkt zu analyzing
             // oder werfen Fehler. Hier zur Sicherheit:
-             updateItem(nextItem.id, { status: 'extracting', progress: 50 })
+             updateItem(nextItem.id, { status: 'extracting', progress: 35 })
         } else {
              // Echter Upload Prozess würde hier passieren,
              // wir simulieren kurz den Upload-Step für die UI
              await new Promise(r => setTimeout(r, 500))
-             updateItem(nextItem.id, { status: 'extracting', progress: 30 })
+             updateItem(nextItem.id, { status: 'uploading', progress: 12 })
              
              // Extraktion (API Call)
              const formData = new FormData()
@@ -119,7 +173,10 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
         }
 
         // Falls wir eine externe Extract-Funktion haben (via Props):
-        if (onExtractComplete && nextItem.file) {
+        if (onExtractComplete && (nextItem.file || nextItem.fileKey)) {
+            const localFileHash = nextItem.file
+              ? await hashBrowserFile(nextItem.file)
+              : nextItem.fileHash ?? null
             // Hier müssten wir eigentlich den Text extrahieren.
             // Da die Extraktionslogik komplex ist (Upload URL etc.), 
             // haben wir das meist in der Page. 
@@ -132,72 +189,123 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
             
 
             // 1. Upload URL holen
-            const urlRes = await fetch('/api/upload-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fileName: nextItem.fileName, fileType: nextItem.file.type, fileSize: nextItem.file.size })
-            })
-            if (!urlRes.ok) {
-              throw new Error(
-                await readApiErrorMessage(
-                  urlRes,
-                  'Der Upload der Datei konnte nicht vorbereitet werden. Bitte versuche es erneut.'
-                )
-              )
-            }
-            const { uploadUrl, fileKey } = await urlRes.json()
-            
-            // Speichere fileKey im Item
-            updateItem(nextItem.id, { fileKey, status: 'extracting', progress: 60 })
+            let fileKey = nextItem.fileKey ?? null
 
-            // 2. Upload zu S3
-            const uploadResponse = await fetch(uploadUrl, {
-              method: 'PUT',
-              body: nextItem.file,
-              headers: { 'Content-Type': nextItem.file.type },
-            })
-            if (!uploadResponse.ok) {
-              throw new Error(
-                normalizeStatusError(
-                  uploadResponse.status,
-                  '',
-                  'Der Upload der Datei ist fehlgeschlagen. Bitte versuche es erneut.'
+            if (nextItem.file) {
+              const urlRes = await fetch('/api/upload-url', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ fileName: nextItem.fileName, fileType: nextItem.file.type, fileSize: nextItem.file.size })
+              })
+              if (!urlRes.ok) {
+                throw new Error(
+                  await readApiErrorMessage(
+                    urlRes,
+                    'Der Upload der Datei konnte nicht vorbereitet werden. Bitte versuche es erneut.'
+                  )
                 )
-              )
+              }
+              const uploadData = await urlRes.json()
+              fileKey = uploadData.fileKey
+              
+              // Speichere fileKey im Item
+              updateItem(nextItem.id, {
+                fileKey,
+                fileHash: localFileHash,
+                status: 'uploading',
+                progress: 18,
+              })
+
+              // 2. Upload zu S3
+              await uploadFileWithProgress(uploadData.uploadUrl, nextItem.file, (percent) => {
+                const mappedProgress = 18 + Math.round(percent * 0.27)
+                updateItem(nextItem.id, {
+                  status: 'uploading',
+                  progress: Math.min(mappedProgress, 45),
+                })
+              })
+            } else {
+              updateItem(nextItem.id, {
+                fileKey,
+                fileHash: localFileHash,
+                status: 'uploading',
+                progress: 45,
+              })
             }
             
 
             // 3. Extract Text
-            const extRes = await fetch('/api/extract-klausur', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fileKey })
-            })
-            if (!extRes.ok) {
-              throw new Error(
-                await readApiErrorMessage(
-                  extRes,
-                  'Die PDF konnte nicht gelesen werden. Bitte versuche es mit einer anderen Datei erneut.'
+            updateItem(nextItem.id, { status: 'extracting', progress: 52 })
+            const cachedExtraction = localFileHash ? getCachedExtraction(localFileHash) : null
+            let extractedText: string
+            let extractedTextHash: string | null
+            let resolvedFileHash = localFileHash
+
+            if (cachedExtraction) {
+              extractedText = cachedExtraction.text
+              extractedTextHash = cachedExtraction.textHash
+              updateItem(nextItem.id, {
+                status: 'extracting',
+                progress: 64,
+                textHash: extractedTextHash,
+              })
+            } else {
+              const extRes = await fetch('/api/extract-klausur', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ fileKey })
+              })
+              if (!extRes.ok) {
+                throw new Error(
+                  await readApiErrorMessage(
+                    extRes,
+                    'Die PDF konnte nicht gelesen werden. Bitte versuche es mit einer anderen Datei erneut.'
+                  )
                 )
-              )
-            }
-            const extData = await extRes.json()
-            if (
-              extData?.error ||
-              typeof extData?.text !== 'string' ||
-              !extData.text.trim()
-            ) {
-              throw new Error(
-                normalizeStatusError(
-                  extRes.status,
-                  typeof extData?.error === 'string' ? extData.error : '',
-                  'Die PDF konnte nicht gelesen werden. Bitte versuche es mit einer anderen Datei erneut.'
+              }
+              const extData = await extRes.json()
+              if (
+                extData?.error ||
+                typeof extData?.text !== 'string' ||
+                !extData.text.trim()
+              ) {
+                throw new Error(
+                  normalizeStatusError(
+                    extRes.status,
+                    typeof extData?.error === 'string' ? extData.error : '',
+                    'Die PDF konnte nicht gelesen werden. Bitte versuche es mit einer anderen Datei erneut.'
+                  )
                 )
-              )
+              }
+
+              extractedText = extData.text
+              extractedTextHash =
+                typeof extData?.textHash === 'string' ? extData.textHash : null
+              resolvedFileHash =
+                typeof extData?.fileHash === 'string' ? extData.fileHash : localFileHash
+
+              if (extractedTextHash && resolvedFileHash) {
+                storeCachedExtraction({
+                  fileHash: resolvedFileHash,
+                  fileName: nextItem.fileName,
+                  text: extractedText,
+                  textHash: extractedTextHash,
+                  updatedAt: new Date().toISOString(),
+                })
+              }
             }
+            updateItem(nextItem.id, { status: 'extracting', progress: 68 })
             
             // Callback mit Item inkl. fileKey aufrufen
-            await onExtractComplete({ ...nextItem, fileKey }, extData.text)
+            await onExtractComplete(
+              {
+                ...nextItem,
+                fileKey,
+                fileHash: resolvedFileHash ?? null,
+                textHash: extractedTextHash,
+              },
+              extractedText
+            )
         }
 
         // Status wird im onExtractComplete callback der Page auf 'analyzing' oder 'completed' gesetzt
@@ -241,6 +349,3 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
     retryItem
   }
 }
-
-
-

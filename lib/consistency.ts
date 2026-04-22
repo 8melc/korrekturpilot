@@ -1,30 +1,176 @@
 /**
  * Konsistenz-Helpers für deterministische Klausurbewertungen
- * 
+ *
  * Diese Funktionen stellen sicher, dass gleiche Klausuren
  * immer gleich bewertet werden (Reproduzierbarkeit).
  */
 
 import crypto from 'crypto';
 
+export const CONSISTENCY_VERSION = '2026-04-09-consistency-v1';
+export const ANALYSIS_MODEL_CONFIG = {
+  model: 'gpt-4o',
+  temperature: 0.0,
+  topP: 1,
+  ocrProvider: 'google-generative-ai',
+  ocrModel: 'gemini-2.5-flash',
+} as const;
+
+export interface AnalysisFingerprintInput {
+  klausurText: string;
+  erwartungshorizont: string;
+  subject?: string;
+  studentName?: string;
+  className?: string;
+  gradeLevel?: string;
+  schoolYear?: string;
+}
+
+export interface AnalysisAudit {
+  version: string;
+  analysisInputHash: string;
+  klausurTextHash: string;
+  erwartungshorizontHash: string;
+  promptHash: string;
+  systemPromptHash: string;
+  seed: number;
+  model: string;
+  temperature: number;
+  topP: number;
+  ocrProvider: string;
+  ocrModel: string;
+  klausurFileHash?: string | null;
+  erwartungshorizontFileHash?: string | null;
+  sourceCorrectionId?: string;
+  reusedFromCorrectionId?: string;
+  generatedAt: string;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+
+  return `{${entries
+    .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+    .join(',')}}`;
+}
+
+export function normalizeTextForConsistency(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export function hashString(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+export function hashBytes(value: Uint8Array): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+export function buildAnalysisInputHash(input: AnalysisFingerprintInput): string {
+  return hashString(
+    stableStringify({
+      version: CONSISTENCY_VERSION,
+      klausurText: normalizeTextForConsistency(input.klausurText),
+      erwartungshorizont: normalizeTextForConsistency(input.erwartungshorizont),
+      subject: input.subject?.trim() ?? '',
+      studentName: input.studentName?.trim() ?? '',
+      className: input.className?.trim() ?? '',
+      gradeLevel: input.gradeLevel?.trim() ?? '',
+      schoolYear: input.schoolYear?.trim() ?? '',
+    })
+  );
+}
+
+export function buildPromptHash(params: {
+  systemPrompt: string;
+  prompt: string;
+  model: string;
+  temperature: number;
+  topP: number;
+}): string {
+  return hashString(
+    stableStringify({
+      version: CONSISTENCY_VERSION,
+      model: params.model,
+      temperature: params.temperature,
+      topP: params.topP,
+      systemPrompt: params.systemPrompt,
+      prompt: params.prompt,
+    })
+  );
+}
+
 /**
- * Generiert einen deterministischen Seed aus correctionId und studentName.
- * 
+ * Generiert einen deterministischen Seed aus einem stabilen Fingerprint.
+ *
  * Der Seed wird für OpenAI's API verwendet, um bei gleichen Inputs
  * immer die gleichen Outputs zu erhalten.
- * 
- * @param correctionId - Eindeutige ID der Korrektur
- * @param studentName - Name des Schülers
+ *
+ * @param primaryInput - Stabile Eingabe, z.B. Prompt- oder Input-Hash
+ * @param secondaryInput - Optionaler Zusatz für Backward-Compat
  * @returns Integer zwischen 0 und 2^31-1
  */
 export function generateDeterministicSeed(
-  correctionId: string,
-  studentName: string
+  primaryInput: string,
+  secondaryInput?: string
 ): number {
-  const input = `${correctionId}:${studentName}`;
-  const hash = crypto.createHash('sha256').update(input).digest('hex');
+  const input = secondaryInput
+    ? `${primaryInput}:${secondaryInput}`
+    : primaryInput;
+  const hash = hashString(input);
   // Konvertiere erste 8 Hex-Zeichen zu Integer zwischen 0 und 2^31-1
   return parseInt(hash.slice(0, 8), 16) % (2 ** 31);
+}
+
+export function createAnalysisAudit(input: {
+  analysisInputHash: string;
+  klausurTextHash: string;
+  erwartungshorizontHash: string;
+  promptHash: string;
+  systemPromptHash: string;
+  seed: number;
+  model: string;
+  temperature: number;
+  topP: number;
+  klausurFileHash?: string | null;
+  erwartungshorizontFileHash?: string | null;
+  sourceCorrectionId?: string;
+  reusedFromCorrectionId?: string;
+}): AnalysisAudit {
+  return {
+    version: CONSISTENCY_VERSION,
+    analysisInputHash: input.analysisInputHash,
+    klausurTextHash: input.klausurTextHash,
+    erwartungshorizontHash: input.erwartungshorizontHash,
+    promptHash: input.promptHash,
+    systemPromptHash: input.systemPromptHash,
+    seed: input.seed,
+    model: input.model,
+    temperature: input.temperature,
+    topP: input.topP,
+    ocrProvider: ANALYSIS_MODEL_CONFIG.ocrProvider,
+    ocrModel: ANALYSIS_MODEL_CONFIG.ocrModel,
+    klausurFileHash: input.klausurFileHash ?? null,
+    erwartungshorizontFileHash: input.erwartungshorizontFileHash ?? null,
+    sourceCorrectionId: input.sourceCorrectionId,
+    reusedFromCorrectionId: input.reusedFromCorrectionId,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 /**
@@ -44,7 +190,7 @@ export interface ValidationResult {
  * 3. Keine erreichten Punkte > maxPunkte
  * 4. Evidence-Felder (whatIsCorrect/whatIsWrong) nicht beide leer
  * 5. Pflichtfelder vorhanden
- * 
+ *
  * @param output - Die Analyse-Ausgabe von OpenAI
  * @param expectedTaskCount - Erwartete Anzahl an Aufgaben (aus Erwartungshorizont)
  * @returns ValidationResult mit valid-Flag und Error-Array
@@ -135,15 +281,9 @@ export function validateAnalysisOutput(
     }
   }
 
-  // 5. Weitere Pflichtfelder in meta prüfen
-  if (output.meta) {
-    const requiredMetaFields = ['studentName', 'class', 'subject', 'grade'];
-    requiredMetaFields.forEach((field) => {
-      if (!output.meta[field]) {
-        errors.push(`Missing meta.${field}`);
-      }
-    });
-  }
+  // Datenschutz / Kontextfelder:
+  // Diese Felder dürfen nachgelagert aus sicherem Kontext ergänzt werden
+  // und sollen keinen Retry auslösen, wenn die Arbeit anonymisiert ist.
 
   // teacherConclusion prüfen
   if (!output.teacherConclusion || !output.teacherConclusion.summary) {
@@ -166,12 +306,12 @@ export function validateAnalysisOutput(
 
 /**
  * Extrahiert die erwartete Aufgaben-Anzahl aus dem Erwartungshorizont.
- * 
+ *
  * Verwendet Multi-Pass Regex um verschiedene Formate zu erkennen:
  * - 1.1, 1.2, 2.3 (strikt)
  * - "Aufgabe 1", "Frage 2"
  * - Nummerierung am Zeilenanfang
- * 
+ *
  * @param erwartungshorizont - Der Erwartungshorizont-Text
  * @returns Anzahl der gefundenen Aufgaben
  */

@@ -1,16 +1,19 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import DataResetButton from '@/components/DataResetButton';
+import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { getGradeInfo } from '@/lib/grades';
-import { getNoteColorConfig, getStatusConfig } from '@/lib/ux-helpers';
-import StatusIcon from '@/components/icons/StatusIcon';
 import { StoredResultEntry } from '@/types/results';
 import ResultCompactView from '@/components/ResultCompactView';
 import DetailDrawer from '@/components/DetailDrawer';
 import FeedbackPreviewModal from '@/components/beispielauswertung/FeedbackPreviewModal';
 import { useCorrections } from '@/hooks/useCorrections';
+import {
+  RESTART_CORRECTION_STORAGE_KEY,
+  type RestartCorrectionPayload,
+} from '@/lib/restart-correction';
+import { readApiErrorMessage } from '@/lib/user-facing-errors';
 
 export default function ResultsPage() {
   const { results, loading: isLoading, reload } = useCorrections();
@@ -138,17 +141,107 @@ export default function ResultsPage() {
       });
 
       if (!response.ok) {
-        console.error('DELETE /api/corrections failed', await response.text());
-        throw new Error('Fehler beim Löschen');
+        if (response.status !== 404) {
+          throw new Error(
+            await readApiErrorMessage(
+              response,
+              'Die Klausur konnte nicht gelöscht werden. Bitte versuche es erneut.'
+            )
+          );
+        }
       }
 
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       await reload();
+      if (selectedEntryForDrawer?.id === id) {
+        setIsDrawerOpen(false);
+        setSelectedEntryForDrawer(null);
+      }
+      toast.success('Die Klausur wurde gelöscht.');
     } catch (error) {
       console.error('Fehler beim Löschen:', error);
-      alert('Fehler beim Löschen der Klausur. Bitte versuche es erneut.');
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Die Klausur konnte nicht gelöscht werden. Bitte versuche es erneut.'
+      );
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const handleRestartSingle = async (entry: StoredResultEntry, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+
+    if (!entry.fileUrl || !entry.expectationUrl) {
+      alert('Für diese Klausur fehlen die gespeicherten PDF-Dateien. Ein kompletter Neustart ist daher nicht möglich.');
+      return;
+    }
+
+    if (!confirm('Die aktuelle Analyse wird verworfen und für diese Klausur komplett neu gestartet. Fortfahren?')) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      if (selectedEntryForDrawer?.id === entry.id) {
+        setIsDrawerOpen(false);
+        setSelectedEntryForDrawer(null);
+      }
+
+      const response = await fetch('/api/corrections', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: entry.id,
+          status: 'Analyse läuft…',
+          analysis: null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          await readApiErrorMessage(
+            response,
+            'Die Klausur konnte nicht neu gestartet werden. Bitte versuche es erneut.'
+          )
+        );
+      }
+
+      const restartPayload: RestartCorrectionPayload = {
+        id: entry.id,
+        fileName: entry.fileName,
+        fileKey: entry.fileUrl,
+        expectationKey: entry.expectationUrl,
+        expectationFileName: entry.expectationUrl.split('/').pop() ?? null,
+        course: entry.course,
+      };
+
+      localStorage.setItem(
+        RESTART_CORRECTION_STORAGE_KEY,
+        JSON.stringify(restartPayload)
+      );
+
+      toast.info('Die Klausur wird im Korrektur-Flow komplett neu gestartet.')
+      window.location.href = '/correction?restart=1'
+    } catch (error) {
+      console.error('Fehler beim Neustarten der Klausur:', error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Die Klausur konnte nicht neu gestartet werden. Bitte versuche es erneut.'
+      );
+      setIsDeleting(false);
+    }
+  };
+
+  const handleEntrySaved = async (updatedEntry: StoredResultEntry) => {
+    setSelectedEntryForDrawer(updatedEntry);
+    await reload();
   };
 
   return (
@@ -271,7 +364,14 @@ export default function ResultsPage() {
                                   <div className="student-avatar">
                                     {(entry.fileName || entry.studentName).charAt(0).toUpperCase()}
                                   </div>
-                                  <span className="student-name">{entry.fileName || entry.studentName}</span>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                    <span className="student-name">{entry.fileName || entry.studentName}</span>
+                                    {entry.analysis?._manualOverride?.edited && (
+                                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-primary)' }}>
+                                        Manuell bearbeitet
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </td>
                               <td>{entry.course.subject}</td>
@@ -308,7 +408,6 @@ export default function ResultsPage() {
                                       {expandedRowId === entry.id ? 'Details ausblenden' : 'Details anzeigen'}
                                     </button>
                                   )}
-                                  {/* Löschen-Funktion vorerst deaktiviert
                                   <button
                                     onClick={(e) => handleDeleteSingle(entry.id, e)}
                                     disabled={isDeleting}
@@ -317,7 +416,15 @@ export default function ResultsPage() {
                                   >
                                     Löschen
                                   </button>
-                                  */}
+                                  {analysis && (
+                                    <button
+                                      onClick={(e) => handleRestartSingle(entry, e)}
+                                      disabled={isDeleting}
+                                      className="secondary-button"
+                                    >
+                                      Komplett neu starten
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -389,15 +496,20 @@ export default function ResultsPage() {
                             checked={selectedIds.has(entry.id)}
                             onChange={() => handleToggleSelection(entry.id)}
                           />
-                          <div className="student-cell">
-                            <div className="student-avatar">
-                              {(entry.fileName || entry.studentName).charAt(0).toUpperCase()}
+                            <div className="student-cell">
+                              <div className="student-avatar">
+                                {(entry.fileName || entry.studentName).charAt(0).toUpperCase()}
+                              </div>
+                              <div className="results-card__meta">
+                                <p className="student-name">{entry.fileName || entry.studentName}</p>
+                                <p className="results-card__sub">{entry.course.subject}</p>
+                                {entry.analysis?._manualOverride?.edited && (
+                                  <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-primary)' }}>
+                                    Manuell bearbeitet
+                                  </p>
+                                )}
+                              </div>
                             </div>
-                            <div className="results-card__meta">
-                              <p className="student-name">{entry.fileName || entry.studentName}</p>
-                              <p className="results-card__sub">{entry.course.subject}</p>
-                            </div>
-                          </div>
                         </div>
                         {gradeInfo && (
                           <span className={`grade-badge ${gradeInfo.badgeClass}`}>
@@ -455,7 +567,6 @@ export default function ResultsPage() {
                             )}
                           </>
                         )}
-                        {/* Löschen-Funktion vorerst deaktiviert
                         <button
                           type="button"
                           onClick={(e) => handleDeleteSingle(entry.id, e)}
@@ -465,7 +576,16 @@ export default function ResultsPage() {
                         >
                           {isDeleting ? 'Löschen...' : 'Löschen'}
                         </button>
-                        */}
+                        {analysis && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleRestartSingle(entry, e)}
+                            disabled={isDeleting}
+                            className="secondary-button"
+                          >
+                            Komplett neu starten
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -489,6 +609,7 @@ export default function ResultsPage() {
             entry={selectedEntryForDrawer}
             isOpen={isDrawerOpen}
             onClose={() => setIsDrawerOpen(false)}
+            onSaved={handleEntrySaved}
           />
 
           <FeedbackPreviewModal
