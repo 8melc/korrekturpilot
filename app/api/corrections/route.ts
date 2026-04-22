@@ -299,10 +299,11 @@ export async function PATCH(request: NextRequest) {
     }
 
     if ('analysis' in body) {
+      const nextAnalysis = body.analysis;
       updates.analysis =
-        body.analysis === null
+        nextAnalysis == null
           ? null
-          : mergeAnalysisInternal(body.analysis, existing.analysis ?? null);
+          : mergeAnalysisInternal(nextAnalysis, existing.analysis ?? null);
     }
     if (body.status) {
       updates.status = mapStatusToDb(body.status);
@@ -336,12 +337,12 @@ export async function PATCH(request: NextRequest) {
       correction: {
         id: body.id,
         status: body.status ? mapStatusToDb(body.status) : existing.status ?? null,
-        analysis:
-          'analysis' in body
-            ? body.analysis === null
-              ? null
-              : mergeAnalysisInternal(body.analysis, existing.analysis ?? null)
-            : existing.analysis ?? null,
+        analysis: (() => {
+          if (!('analysis' in body)) return existing.analysis ?? null;
+          const nextAnalysis = body.analysis;
+          if (nextAnalysis == null) return null;
+          return mergeAnalysisInternal(nextAnalysis, existing.analysis ?? null);
+        })(),
       },
     });
   } catch (error: any) {
