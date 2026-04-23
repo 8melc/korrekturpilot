@@ -875,7 +875,12 @@ export default function CorrectionPage() {
         }
       }
       
-      uploadQueue.updateItem(item.id, { status: 'analyzing', progress: 72 })
+      uploadQueue.updateItem(item.id, {
+        status: 'analyzing',
+        progress: 72,
+        phaseStartedAt: Date.now(),
+        phaseLabel: 'analyzing',
+      })
       
       queuedAnalysesRef.current.add(item.id)
       

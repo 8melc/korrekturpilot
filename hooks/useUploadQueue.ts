@@ -21,12 +21,16 @@ export interface QueueItem {
   error?: string
   forceReanalysis?: boolean
   // Zusätzliche Felder für die Analyse
-  correctionId?: string 
+  correctionId?: string
   klausurText?: string
   erwartungshorizont?: string
   fileKey?: string | null // File Key aus Supabase Storage
   fileHash?: string | null
   textHash?: string | null
+  // Zeit-Tracking für Live-Feedback (UploadProgressList)
+  createdAt?: number       // ms-Timestamp beim Einreihen in die Queue
+  phaseStartedAt?: number  // ms-Timestamp beim Start der aktuellen Phase (uploading/extracting/analyzing)
+  phaseLabel?: 'uploading' | 'extracting' | 'analyzing' // Welche Phase der Counter gerade misst
 }
 
 interface UseUploadQueueProps {
@@ -109,10 +113,12 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
     uniqueItems.forEach(item => queuedFileIdsRef.current.add(item.id))
 
     // Mappe zu QueueItems
+    const nowTs = Date.now()
     const newQueueItems: QueueItem[] = uniqueItems.map(item => ({
       ...item,
       status: 'pending',
-      progress: 0
+      progress: 0,
+      createdAt: nowTs,
     }))
 
     setQueue(prev => [...prev, ...newQueueItems])
@@ -143,7 +149,12 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
 
       // 3. Starte Verarbeitung
       setActiveCount(prev => prev + 1)
-      updateItem(nextItem.id, { status: 'uploading', progress: 5 })
+      updateItem(nextItem.id, {
+        status: 'uploading',
+        progress: 5,
+        phaseStartedAt: Date.now(),
+        phaseLabel: 'uploading',
+      })
 
       try {
         // A) Upload Simulation / Logik
@@ -235,7 +246,12 @@ export function useUploadQueue({ maxConcurrent = 3, onExtractComplete }: UseUplo
             
 
             // 3. Extract Text
-            updateItem(nextItem.id, { status: 'extracting', progress: 52 })
+            updateItem(nextItem.id, {
+              status: 'extracting',
+              progress: 52,
+              phaseStartedAt: Date.now(),
+              phaseLabel: 'extracting',
+            })
             const cachedExtraction = localFileHash ? getCachedExtraction(localFileHash) : null
             let extractedText: string
             let extractedTextHash: string | null
