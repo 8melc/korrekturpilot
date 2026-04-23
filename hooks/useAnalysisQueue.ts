@@ -31,6 +31,11 @@ export interface AnalysisQueueItem {
   klausurTextHash?: string | null
   erwartungshorizontFileHash?: string | null
   erwartungshorizontHash?: string | null
+  /**
+   * Optional: manuell eingegebene Gesamtpunktzahl der Klausur.
+   * Wird an /api/analyze durchgereicht und dort als autoritativer Max-Wert verwendet.
+   */
+  expectedMaxPoints?: number | null
 }
 
 interface UseAnalysisQueueOptions {
@@ -148,6 +153,7 @@ export function useAnalysisQueue({
             klausurTextHash: pendingItem.klausurTextHash,
             erwartungshorizontFileHash: pendingItem.erwartungshorizontFileHash,
             erwartungshorizontHash: pendingItem.erwartungshorizontHash,
+            expectedMaxPoints: pendingItem.expectedMaxPoints ?? undefined,
           })
         })
 

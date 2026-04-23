@@ -11,6 +11,7 @@ import { JSON_SCHEMA_ENFORCEMENT } from "@/lib/analysis/prompts/json-schema-enfo
 import { validateAnalysis, normalizeAnalysis } from "@/lib/analysis/validator";
 import { getGradeInfo, getPerformanceLevel } from "@/lib/grades";
 import { extractGradeLevelFromClassName, generateTeacherConclusion } from "@/lib/analysis/controller";
+import { extractKlausurStructure, type KlausurStructure } from "@/lib/analysis/extract-structure";
 import type { MasterAnalysisInput, UniversalAnalysis } from "@/lib/analysis/types";
 import {
   ANALYSIS_MODEL_CONFIG,
@@ -50,7 +51,48 @@ type AnalyzeRequestBody = {
   klausurTextHash?: string;
   erwartungshorizontFileHash?: string;
   erwartungshorizontHash?: string;
+  /**
+   * Optional: manuell eingegebene Gesamtpunktzahl der Klausur (Variant 2).
+   * Überschreibt die aus KI / Erwartungshorizont abgeleiteten Maximalpunkte.
+   */
+  expectedMaxPoints?: number;
 };
+
+/**
+ * Server-lokaler Cache für extrahierte Klausur-Strukturen.
+ * Key: erwartungshorizontHash. Hält pro Serverinstanz, damit bei
+ * Batch-Uploads mehrerer Schüler derselben Klausur nur einmal extrahiert wird.
+ * Kein persistenter Cache — auf Vercel-Cold-Starts wird er geleert, was
+ * akzeptabel ist (der Extract-Call kostet ~$0.001).
+ */
+const klausurStructureCache = new Map<string, KlausurStructure>();
+
+async function getOrExtractKlausurStructure(
+  erwartungshorizont: string,
+  erwartungshorizontHash: string | undefined,
+  seed: number,
+): Promise<KlausurStructure | null> {
+  if (erwartungshorizontHash && klausurStructureCache.has(erwartungshorizontHash)) {
+    const cached = klausurStructureCache.get(erwartungshorizontHash);
+    console.log("[Klausur-Struktur] Cache-Hit:", {
+      hash: erwartungshorizontHash.slice(0, 8),
+      totalMaxPoints: cached?.totalMaxPoints,
+      tasks: cached?.tasks.length,
+    });
+    return cached ?? null;
+  }
+
+  const structure = await extractKlausurStructure(erwartungshorizont, seed);
+  if (structure && erwartungshorizontHash) {
+    klausurStructureCache.set(erwartungshorizontHash, structure);
+    console.log("[Klausur-Struktur] Neu extrahiert und gecached:", {
+      hash: erwartungshorizontHash.slice(0, 8),
+      totalMaxPoints: structure.totalMaxPoints,
+      tasks: structure.tasks.length,
+    });
+  }
+  return structure;
+}
 
 type AnalysisExecutionResult = {
   analysis: UniversalAnalysis;
@@ -132,6 +174,10 @@ async function performConsistentAnalysis(
   input: MasterAnalysisInput,
   seed: number,
   promptBundle: ReturnType<typeof buildConsistentPromptBundle>,
+  options: {
+    authoritativeStructure?: KlausurStructure;
+    expectedMaxPoints?: number;
+  } = {},
 ): Promise<AnalysisExecutionResult> {
   const openai = getOpenAIClient();
 
@@ -262,10 +308,15 @@ async function performConsistentAnalysis(
         metaAchieved: analysis.meta?.achievedPoints,
         metaMax: analysis.meta?.maxPoints,
         taskPoints: analysis.tasks?.map((t: any) => `${t.taskId}: ${t.points}`) || [],
+        authoritativeMax: options.authoritativeStructure?.totalMaxPoints,
+        expectedMaxPoints: options.expectedMaxPoints,
       });
 
-      // Normalisieren (korrigiert Punkte aus Einzelaufgaben)
-      const normalized = normalizeAnalysis(analysis);
+      // Normalisieren (Maximalpunkte aus Lehrer-Input / Erwartungshorizont / KI-Summe)
+      const normalized = normalizeAnalysis(analysis, {
+        authoritativeStructure: options.authoritativeStructure,
+        expectedMaxPoints: options.expectedMaxPoints,
+      });
 
       // Note berechnen basierend auf korrekten Punkten
       if (!normalized.meta.grade && normalized.meta.maxPoints > 0) {
@@ -376,7 +427,16 @@ export async function POST(request: NextRequest) {
     klausurTextHash,
     erwartungshorizontFileHash,
     erwartungshorizontHash,
+    expectedMaxPoints: rawExpectedMaxPoints,
   } = body ?? {};
+
+  // Lehrer-Input für Gesamtpunktzahl (optional). Nur valide positive ganze Zahlen übernehmen.
+  const expectedMaxPoints =
+    typeof rawExpectedMaxPoints === "number" &&
+    Number.isFinite(rawExpectedMaxPoints) &&
+    rawExpectedMaxPoints > 0
+      ? Math.round(rawExpectedMaxPoints)
+      : undefined;
 
   // 3. RESULT FREEZING – nie doppelt analysieren
   let correctionData: CorrectionRow | null = null;
@@ -546,6 +606,7 @@ export async function POST(request: NextRequest) {
       className,
       gradeLevel,
       schoolYear,
+      expectedMaxPoints,
     });
     const systemPromptHash = hashString(promptBundle.systemPrompt);
     const promptHash = buildPromptHash({
@@ -658,11 +719,27 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 8. Analyse durchführen (mit Validation und Retry)
+    // 8a. Klausur-Struktur aus Erwartungshorizont extrahieren (Variant 1).
+    // Wird übersprungen, wenn die Lehrkraft eine expectedMaxPoints manuell
+    // gesetzt hat (Variant 2) — der Lehrer-Input ist autoritativ.
+    let authoritativeStructure: KlausurStructure | null = null;
+    if (!expectedMaxPoints) {
+      authoritativeStructure = await getOrExtractKlausurStructure(
+        erwartungshorizont,
+        erwartungshorizontHash,
+        deterministicSeed,
+      );
+    }
+
+    // 8b. Analyse durchführen (mit Validation und Retry)
     const analysisResult = await performConsistentAnalysis(
       input,
       deterministicSeed,
       promptBundle,
+      {
+        authoritativeStructure: authoritativeStructure ?? undefined,
+        expectedMaxPoints,
+      },
     );
     analysis = analysisResult.analysis;
     systemFingerprint = analysisResult.systemFingerprint;
@@ -673,10 +750,17 @@ export async function POST(request: NextRequest) {
     const erreichtePunkte = analysis.meta?.achievedPoints ?? 0;
     const maxPunkte = analysis.meta?.maxPoints ?? 0;
 
+    const maxPunkteQuelle = expectedMaxPoints
+      ? "Lehrer-Input"
+      : authoritativeStructure
+      ? "Erwartungshorizont-Struktur"
+      : "KI-Summe";
+
     console.log("[Konsistenz] Analyse erfolgreich abgeschlossen:", {
       aufgabenAnzahl,
       erreichtePunkte,
       maxPunkte,
+      maxPunkteQuelle,
       note: analysis.meta?.grade,
       seed: deterministicSeed,
     });

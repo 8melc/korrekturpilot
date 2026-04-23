@@ -1,4 +1,5 @@
 import type { UniversalAnalysis, UniversalTask } from './types';
+import type { KlausurStructure } from './extract-structure';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -63,11 +64,34 @@ export function validateAnalysis(analysis: any): ValidationResult {
   };
 }
 
+export interface NormalizeOptions {
+  /**
+   * Autoritative Klausur-Struktur (aus Erwartungshorizont extrahiert).
+   * Wenn vorhanden, werden Maximalpunkte aus dieser Quelle verwendet,
+   * und im KI-Output fehlende Aufgaben werden als "0/max" ergänzt.
+   */
+  authoritativeStructure?: KlausurStructure;
+  /**
+   * Manuell eingegebene Gesamtpunktzahl der Klausur (Variant 2).
+   * Überschreibt die berechneten Maximalpunkte. Hat Vorrang vor
+   * authoritativeStructure.totalMaxPoints.
+   */
+  expectedMaxPoints?: number;
+}
+
 /**
- * Bereinigt und normalisiert die Analyse
- * WICHTIG: Berechnet Gesamtpunkte aus Einzelaufgaben, nicht aus meta (KI kann falsche Werte liefern)
+ * Bereinigt und normalisiert die Analyse.
+ *
+ * Reihenfolge der Maximalpunkte-Quellen (absteigend nach Priorität):
+ *   1. expectedMaxPoints (Lehrer-Input)
+ *   2. authoritativeStructure.totalMaxPoints (aus Erwartungshorizont extrahiert)
+ *   3. Summe der Task-Punkte aus der KI-Antwort
+ *   4. analysis.meta.maxPoints (veralteter Fallback)
  */
-export function normalizeAnalysis(analysis: any): UniversalAnalysis {
+export function normalizeAnalysis(
+  analysis: any,
+  options: NormalizeOptions = {},
+): UniversalAnalysis {
   const tasks = (analysis.tasks || []).map((task: any) => {
     // Prüfe ob es eine Zeichnungsaufgabe ist
     const istZeichnungsAufgabe = 
@@ -123,6 +147,34 @@ export function normalizeAnalysis(analysis: any): UniversalAnalysis {
     }
   });
 
+  // Wenn eine autoritative Klausur-Struktur vorhanden ist: fehlende Aufgaben
+  // als "0/max" ergänzen. Verhindert, dass die Gesamt-Max-Punktzahl zwischen
+  // Schülerinnen derselben Klausur schwankt, nur weil die KI in einer
+  // Schülerklausur weniger Aufgaben identifiziert hat (z. B. wegen OCR-Lücken
+  // oder leerer Antworten).
+  if (options.authoritativeStructure) {
+    const normalizeId = (id: string) => id.trim().toLowerCase().replace(/\s+/g, '');
+    const presentIds = new Set(tasks.map((t: UniversalTask) => normalizeId(t.taskId)));
+    for (const structTask of options.authoritativeStructure.tasks) {
+      if (!presentIds.has(normalizeId(structTask.taskId))) {
+        tasks.push({
+          taskId: structTask.taskId,
+          taskTitle: structTask.taskTitle,
+          points: `0/${structTask.maxPoints}`,
+          whatIsCorrect: [],
+          whatIsWrong: [],
+          improvementTips: [],
+          teacherCorrections: [],
+          studentFriendlyTips: [],
+          studentAnswerSummary: '',
+          benoetigtManuelleKorrektur: true,
+          warnung: `⚠️ Aufgabe ${structTask.taskId} wurde in der Schülerklausur nicht gefunden — bitte manuell prüfen (evtl. OCR-Lücke oder nicht bearbeitet).`,
+        });
+        console.warn(`[Struktur] Aufgabe ${structTask.taskId} fehlte im KI-Output, als 0/${structTask.maxPoints} ergänzt.`);
+      }
+    }
+  }
+
   // KRITISCH: Berechne Gesamtpunkte aus Einzelaufgaben (KI kann falsche Werte in meta liefern)
   let calculatedMaxPoints = 0;
   let calculatedAchievedPoints = 0;
@@ -138,9 +190,30 @@ export function normalizeAnalysis(analysis: any): UniversalAnalysis {
     }
   });
 
-  // Verwende berechnete Punkte, falls vorhanden, sonst Fallback auf meta
-  const maxPoints = calculatedMaxPoints > 0 ? calculatedMaxPoints : (analysis.meta?.maxPoints || 0);
-  const achievedPoints = calculatedAchievedPoints > 0 ? calculatedAchievedPoints : (analysis.meta?.achievedPoints || 0);
+  // Maximalpunkte nach Priorität:
+  //   1. Lehrer-Input (expectedMaxPoints) — überschreibt alles
+  //   2. Autoritative Struktur aus Erwartungshorizont
+  //   3. Summe der Task-Punkte (KI)
+  //   4. Alter Fallback aus analysis.meta
+  const authoritativeMax = options.authoritativeStructure?.totalMaxPoints;
+  const maxPoints =
+    (typeof options.expectedMaxPoints === 'number' && options.expectedMaxPoints > 0
+      ? options.expectedMaxPoints
+      : undefined) ??
+    (typeof authoritativeMax === 'number' && authoritativeMax > 0 ? authoritativeMax : undefined) ??
+    (calculatedMaxPoints > 0 ? calculatedMaxPoints : analysis.meta?.maxPoints || 0);
+
+  const achievedPoints =
+    calculatedAchievedPoints > 0
+      ? Math.min(calculatedAchievedPoints, maxPoints)
+      : analysis.meta?.achievedPoints || 0;
+
+  if (calculatedMaxPoints > 0 && maxPoints > 0 && calculatedMaxPoints !== maxPoints) {
+    console.warn(
+      `[Konsistenz] Max-Punkt-Abweichung: KI-Summe ${calculatedMaxPoints}, verwendet ${maxPoints} ` +
+        `(Quelle: ${options.expectedMaxPoints ? 'Lehrer-Input' : authoritativeMax ? 'Erwartungshorizont-Struktur' : 'KI'})`,
+    );
+  }
 
   // Berechne Prozentsatz
   const percentage = maxPoints > 0 ? (achievedPoints / maxPoints) * 100 : 0;

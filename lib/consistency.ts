@@ -24,6 +24,12 @@ export interface AnalysisFingerprintInput {
   className?: string;
   gradeLevel?: string;
   schoolYear?: string;
+  /**
+   * Optional: manuell vorgegebene Gesamtpunktzahl (Variant 2).
+   * Wird in den Hash aufgenommen, damit verschiedene Lehrer-Werte
+   * nicht dasselbe (gecachte) Analyseergebnis zurückgeben.
+   */
+  expectedMaxPoints?: number;
 }
 
 export interface AnalysisAudit {
@@ -92,6 +98,10 @@ export function buildAnalysisInputHash(input: AnalysisFingerprintInput): string 
       className: input.className?.trim() ?? '',
       gradeLevel: input.gradeLevel?.trim() ?? '',
       schoolYear: input.schoolYear?.trim() ?? '',
+      expectedMaxPoints:
+        typeof input.expectedMaxPoints === 'number' && input.expectedMaxPoints > 0
+          ? input.expectedMaxPoints
+          : null,
     })
   );
 }
