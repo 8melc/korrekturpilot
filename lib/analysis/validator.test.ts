@@ -196,6 +196,105 @@ describe('validateFeedbackOverlap - BUG3 Fix: Feedback Overlap-Validierung', () 
     expect(normalized.teacherConclusion.studentPatterns).toEqual([]);
   });
 
+  it('normalizeAnalysis uses expectedMaxPoints as authoritative maximum when provided', () => {
+    const rawOutput = {
+      tasks: [
+        {
+          taskId: '1', taskTitle: 'A1', points: '4/5',
+          whatIsCorrect: ['ok'], whatIsWrong: [], improvementTips: [],
+          teacherCorrections: [], studentFriendlyTips: [],
+          studentAnswerSummary: 'Antwort vorhanden.',
+        },
+      ],
+      strengths: [], nextSteps: [],
+    };
+
+    const normalized = normalizeAnalysis(rawOutput, { expectedMaxPoints: 28 });
+    expect(normalized.meta.maxPoints).toBe(28);
+    expect(normalized.meta.achievedPoints).toBe(4);
+  });
+
+  it('normalizeAnalysis fills missing tasks from authoritativeStructure as 0/max', () => {
+    const rawOutput = {
+      // KI hat nur Aufgabe 1 und 2 erkannt
+      tasks: [
+        {
+          taskId: '1', taskTitle: 'A1', points: '4/6',
+          whatIsCorrect: ['ok'], whatIsWrong: [], improvementTips: [],
+          teacherCorrections: [], studentFriendlyTips: [],
+          studentAnswerSummary: 'Antwort vorhanden.',
+        },
+        {
+          taskId: '2', taskTitle: 'A2', points: '3/6',
+          whatIsCorrect: ['ok'], whatIsWrong: [], improvementTips: [],
+          teacherCorrections: [], studentFriendlyTips: [],
+          studentAnswerSummary: 'Antwort vorhanden.',
+        },
+      ],
+      strengths: [], nextSteps: [],
+    };
+    // Erwartungshorizont sagt: 4 Aufgaben gesamt, 28 Punkte
+    const authoritativeStructure = {
+      tasks: [
+        { taskId: '1', taskTitle: 'A1', maxPoints: 6 },
+        { taskId: '2', taskTitle: 'A2', maxPoints: 6 },
+        { taskId: '3', taskTitle: 'A3', maxPoints: 8 },
+        { taskId: '4', taskTitle: 'A4', maxPoints: 8 },
+      ],
+      totalMaxPoints: 28,
+    };
+
+    const normalized = normalizeAnalysis(rawOutput, { authoritativeStructure });
+    expect(normalized.meta.maxPoints).toBe(28);
+    expect(normalized.meta.achievedPoints).toBe(7); // 4 + 3, fehlende Aufgaben geben 0
+    expect(normalized.tasks).toHaveLength(4);
+    const task3 = normalized.tasks.find((t) => t.taskId === '3');
+    expect(task3?.points).toBe('0/8');
+    expect(task3?.benoetigtManuelleKorrektur).toBe(true);
+  });
+
+  it('normalizeAnalysis: expectedMaxPoints has priority over authoritativeStructure', () => {
+    const rawOutput = {
+      tasks: [
+        {
+          taskId: '1', taskTitle: 'A1', points: '4/5',
+          whatIsCorrect: ['ok'], whatIsWrong: [], improvementTips: [],
+          teacherCorrections: [], studentFriendlyTips: [],
+          studentAnswerSummary: 'Antwort.',
+        },
+      ],
+      strengths: [], nextSteps: [],
+    };
+    const authoritativeStructure = {
+      tasks: [{ taskId: '1', taskTitle: 'A1', maxPoints: 5 }],
+      totalMaxPoints: 5,
+    };
+
+    const normalized = normalizeAnalysis(rawOutput, {
+      authoritativeStructure,
+      expectedMaxPoints: 30, // Lehrer überschreibt
+    });
+    expect(normalized.meta.maxPoints).toBe(30);
+  });
+
+  it('normalizeAnalysis: achievedPoints werden auf maxPoints gekappt falls KI zu viel vergibt', () => {
+    const rawOutput = {
+      tasks: [
+        {
+          taskId: '1', taskTitle: 'A1', points: '40/10', // KI vergibt mehr als max (abnormal)
+          whatIsCorrect: ['ok'], whatIsWrong: [], improvementTips: [],
+          teacherCorrections: [], studentFriendlyTips: [],
+          studentAnswerSummary: 'Antwort.',
+        },
+      ],
+      strengths: [], nextSteps: [],
+    };
+
+    const normalized = normalizeAnalysis(rawOutput, { expectedMaxPoints: 10 });
+    expect(normalized.meta.maxPoints).toBe(10);
+    expect(normalized.meta.achievedPoints).toBeLessThanOrEqual(10);
+  });
+
   it('should remove multiple overlapping nextSteps', () => {
     const analysis: UniversalAnalysis = {
       meta: {
