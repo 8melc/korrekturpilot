@@ -117,6 +117,14 @@ const appendToStorage = (entry: { id: string; studentName: string; status: strin
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
 }
 
+function parseExpectedMaxPoints(value: string): number | undefined {
+  const trimmed = value.trim().replace(',', '.')
+  if (!trimmed) return undefined
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return Math.round(parsed)
+}
+
 interface StepIndicatorProps {
   stepNumber: number
   isComplete: boolean
@@ -163,6 +171,7 @@ export default function CorrectionPage() {
   const [expectationFileHash, setExpectationFileHash] = useState<string | null>(null)
   const [expectationTextHash, setExpectationTextHash] = useState<string | null>(null)
   const [expectationError, setExpectationError] = useState<string | null>(null)
+  const [expectedMaxPoints, setExpectedMaxPoints] = useState<string>('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [flowErrorMessage, setFlowErrorMessage] = useState<string | null>(null)
   const [blinkingField, setBlinkingField] = useState<keyof CourseInfo | null>(null)
@@ -888,6 +897,7 @@ export default function CorrectionPage() {
         klausurTextHash: item.textHash ?? null,
         erwartungshorizontFileHash: expectationFileHash ?? null,
         erwartungshorizontHash: expectationTextHash ?? null,
+        expectedMaxPoints: parseExpectedMaxPoints(expectedMaxPoints),
       }])
     }
   })
@@ -1235,6 +1245,37 @@ export default function CorrectionPage() {
                     <path d="M16.7071 5.29289C17.0976 5.68342 17.0976 6.31658 16.7071 6.70711L8.70711 14.7071C8.31658 15.0976 7.68342 15.0976 7.29289 14.7071L3.29289 10.7071C2.90237 10.3166 2.90237 9.68342 3.29289 9.29289C3.68342 8.90237 4.31658 8.90237 4.70711 9.29289L8 12.5858L15.2929 5.29289C15.6834 4.90237 16.3166 4.90237 16.7071 5.29289Z" fill="currentColor"/>
                   </svg>
                   <span>Erwartungshorizont erfolgreich hochgeladen: {expectationFileName}</span>
+                </div>
+              )}
+              {expectationFileName && expectationText && (
+                <div style={{ marginTop: 'var(--spacing-md)' }}>
+                  <label
+                    htmlFor="expected-max-points"
+                    style={{ display: 'block', fontWeight: 500, marginBottom: 'var(--spacing-xs)' }}
+                  >
+                    Gesamtpunktzahl <span style={{ opacity: 0.7, fontWeight: 400 }}>(optional)</span>
+                  </label>
+                  <input
+                    id="expected-max-points"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    placeholder="z. B. 28"
+                    value={expectedMaxPoints}
+                    onChange={(e) => setExpectedMaxPoints(e.target.value)}
+                    style={{
+                      width: '100%',
+                      maxWidth: 160,
+                      padding: 'var(--spacing-sm) var(--spacing-md)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: 'var(--font-size-base)',
+                    }}
+                  />
+                  <p style={{ marginTop: 'var(--spacing-xs)', fontSize: 'var(--font-size-sm)', opacity: 0.75, lineHeight: 1.4 }}>
+                    Wenn du die Gesamtpunktzahl hier angibst, wird sie für alle Schülerinnen und Schüler identisch verwendet. Lässt du das Feld leer, extrahiert der KorrekturPilot die Punktzahl automatisch aus dem Erwartungshorizont.
+                  </p>
                 </div>
               )}
             </div>
