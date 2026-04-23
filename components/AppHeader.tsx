@@ -64,6 +64,21 @@ export default function AppHeader() {
   }, [supabase.auth]);
 
   const navLinks = user ? NAV_LINKS_LOGGED_IN : NAV_LINKS_LOGGED_OUT;
+  const supportLink = (
+    <a
+      href="/support"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="secondary-button"
+      style={{
+        padding: '0.65rem 0.95rem',
+        fontSize: '0.875rem',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      Support
+    </a>
+  );
 
   return (
     <header className={`header ${mobileMenuOpen ? 'mobile-nav-open' : ''}`}>
@@ -115,6 +130,7 @@ export default function AppHeader() {
             </button>
             <div className="desktop-inline-actions">
               {user && <CreditsDisplay />}
+              {supportLink}
               <AuthButton />
             </div>
           </div>
@@ -137,6 +153,7 @@ export default function AppHeader() {
           </nav>
           <div className="mobile-actions">
             {user && <CreditsDisplay />}
+            {supportLink}
             <AuthButton />
           </div>
         </div>
