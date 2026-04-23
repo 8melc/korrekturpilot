@@ -433,7 +433,7 @@ export default function Home() {
             <div className="module-card p-8">
               <h3 className="font-bold">Kontakt &amp; Support</h3>
               <p className="text-lg leading-relaxed" style={{ color: 'var(--color-gray-700)' }}>
-                Fragen? Schreib uns direkt an <a href="mailto:conrads@gannaca.com" className="text-link">conrads@gannaca.com</a>. Wir antworten persönlich und schnell. Serverstandort: Deutschland.
+                Fragen oder Probleme im Produkt? Nutze unseren <Link href="/support" className="text-link">strukturierten Support-Bereich</Link> oder schreibe an <a href="mailto:kontakt@korrekturpilot.de" className="text-link">kontakt@korrekturpilot.de</a>. Wir antworten in der Regel werktags innerhalb von 24 bis 48 Stunden.
               </p>
             </div>
           </div>

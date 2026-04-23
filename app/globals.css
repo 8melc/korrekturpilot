@@ -3914,3 +3914,35 @@ nextjs-portal {
         font-size: 1rem;
     }
 }
+
+.support-form-input,
+.support-form-textarea {
+    width: 100%;
+    border: 1px solid var(--color-gray-300);
+    border-radius: var(--radius-md);
+    background: var(--color-white);
+    color: var(--color-gray-900);
+    padding: 0.85rem 1rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.support-form-input:focus,
+.support-form-textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.12);
+}
+
+.support-form-input:disabled,
+.support-form-textarea:disabled {
+    background: var(--color-gray-50);
+    color: var(--color-gray-500);
+    cursor: not-allowed;
+}
+
+.support-form-textarea {
+    min-height: 8.5rem;
+    resize: vertical;
+}

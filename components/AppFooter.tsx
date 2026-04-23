@@ -16,7 +16,7 @@ export default function AppFooter() {
             <Link href="/agb">AGB (Beta)</Link>
             <Link href="/checkout">Preise &amp; Lizenzen</Link>
             <Link href="/beispielauswertung">Beispielauswertung</Link>
-            <a href="mailto:kontakt@korrekturpilot.de">Kontakt</a>
+            <Link href="/support">Support</Link>
           </div>
           <div style={{ marginTop: 'var(--spacing-sm)', fontSize: '0.875rem', color: 'var(--color-gray-500)' }}>
             <p>&copy; {currentYear} KorrekturPilot | Beta-Version | Entwickelt für Lehrkräfte in Deutschland</p>

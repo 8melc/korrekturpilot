@@ -36,6 +36,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.7,
     },
     {
+      url: `${baseUrl}/support`,
+      lastModified: currentDate,
+      changeFrequency: 'monthly',
+      priority: 0.7,
+    },
+    {
       url: `${baseUrl}/beispielauswertung`,
       lastModified: currentDate,
       changeFrequency: 'monthly',
@@ -43,7 +49,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
   ];
 }
-
 
 
 
