@@ -1,559 +1,569 @@
-# KorrekturPilot — Migrationsplan: gannaca → Markmate
+# KorrekturPilot — Migrationsplan: gannaca → Markmate (in Gründung)
 
 **Stand:** 2026-05-12
-**Quelle:** gannaca GmbH & Co. KG (+ private Accounts von Mel)
-**Ziel:** Markmate GmbH (i.G.) als alleinige operative + rechtliche Eigentümerin
-**Empfänger nach Cut-Over:** Moritz Knapp (nicht-technisch)
-**Mel-Beteiligung:** bis einschließlich Cut-Over-Tag, danach komplett raus
+
+## Klarstellung der Ausgangslage
+
+**Heute (Ist):**
+- KorrekturPilot wird operativ von **gannaca GmbH & Co. KG** betrieben.
+- Abrechnung läuft komplett über gannaca: **OpenAI, Gemini, Supabase** auf gannaca-Kreditkarte (sehr wahrscheinlich auch Vercel, Stripe-Auszahlung, Domain-Registrar, Google Workspace).
+- Mel hält teilweise noch persönliche Identitäten / API-Keys / GitHub-Repo-Ownership.
+- Es existiert **eine einzelne Gmail-Adresse** (`korrekturpilot@gmail.com` o. ä.) als KorrekturPilot-Identität — sonst nichts auf Produkt-Seite.
+- **Markmate GmbH existiert noch NICHT.**
+
+**Zielzustand:**
+- Markmate GmbH (gegründet durch **Christopher + Mel**, „C+M") ist alleinige rechtliche und operative Betreiberin.
+- Nichts mehr auf gannaca-Accounts, nichts mehr auf privaten Mel-Accounts.
+- Christopher führt operativ weiter, Mel ist nach Cut-Over draußen.
+
+**Wichtigster Strukturwechsel zum vorigen Plan:**
+Bis Markmate als juristische Person existiert + Bankkonto + Geschäftskarte hat, ist die finale Migration **nicht möglich** (insbesondere Stripe-KYC, Vertragsabschlüsse, AVV). Der Plan zerfällt in **vier Phasen**, davon ist Phase 1 eine reine Wartezeit ohne Mel-Aufwand.
 
 ---
 
-## 0. Lesart der Tabellen
-
-Jede Tabellenzeile ist mit einem Tag versehen:
+## Lesart der Tags
 
 | Tag | Bedeutung |
 |-----|-----------|
-| **[M]** | Mel-Aufwand SOLO (mit KI / Claude Code) |
-| **[CW]** | Co-Working mit Moritz LIVE (Account-Erstellung, 2FA, KYC-Bestätigung) |
-| **[MM]** | Markmate-Aufgabe OHNE Mel (KYC einreichen, Bankkonto, Domain-Auth-Code annehmen) |
-| **[W]** | Reine Wartezeit (KYC-Prüfung, DNS-Propagation, Registrar-Transfer) — keine Arbeitszeit |
+| **[M]** | Mel SOLO (mit KI / Claude Code) |
+| **[CW]** | Co-Working LIVE Mel + Christopher (2FA, Account-Erstellung, Karten-Zugriff) |
+| **[MM]** | Markmate-/Christopher-Aufgabe OHNE Mel (Gründung, Bank, KYC, Karte) |
+| **[W]** | Reine Wartezeit (keine Arbeitszeit) |
 
-Zeitangaben sind realistische Bandbreiten ohne Puffer-Padding.
-
----
-
-## 1. Technische Inventur (Ist-Zustand)
-
-Stack-Realität dieses Repos (verifiziert):
-
-| Dienst | Verwendung | Env-Variablen (heute) | Webhook-Endpoint(s) |
-|--------|------------|------------------------|---------------------|
-| **GitHub** | Repo-Hosting, CI über Vercel-Integration | — | — |
-| **Supabase** | Auth + Postgres (10 Migrationen) + Storage | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Auth-Callbacks |
-| **Vercel** | Next.js 16 Hosting, ENV-Verwaltung | (alle anderen ENV laufen hier) | — |
-| **Stripe** | Checkout, Subscriptions, Webhooks | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25`, `NEXT_PUBLIC_STRIPE_PRICE_ID_ONE_TIME` | `/api/webhook`, `/api/webhooks/stripe`, `/api/stripe/webhook` |
-| **OpenAI** | KI-Analyse, Bewertung | `OPENAI_API_KEY` | — |
-| **Google Gemini** | PDF-Extraktion (handgeschrieben) | `GOOGLE_AI_KEY` | — |
-| **Domain `korrekturpilot.de`** | Registrar bei gannaca (vermutlich INWX/Strato/etc.) | DNS-Zone | — |
-| **Google Workspace** | E-Mails (`@korrekturpilot.de` an gannaca) | SMTP / Nodemailer (siehe Support-API) | — |
-| **SMTP für Support-Mails** | `nodemailer` (siehe `app/api/support`) | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | — |
-
-**Achtung — drei Webhook-Pfade aktiv im Code.** Im Cut-Over müssen alle drei im neuen Stripe-Account konfiguriert werden, sonst gehen Events verloren.
+Zeiten = realistische Bandbreiten, kein Padding.
 
 ---
 
-## 2. Migrationsliste — Vollständig, gegliedert nach A / B / C
-
-### A) Mel SOLO (mit KI-Unterstützung)
-
-Reine Code-/Dokumenten-/Daten-Arbeit. Kein Account-Login bei Markmate nötig.
-
-| # | Aufgabe | Zeit (Mel) | Abhängigkeit |
-|---|---------|-----------|--------------|
-| A1 | Repo-Inventur: alle Stellen mit „gannaca", privater Mel-Mail, alten Adressen finden (grep über Code, Impressum, README, E-Mail-Templates, SMTP `from`, Mailer-Signaturen) | 1–2 h | — |
-| A2 | ENV-Variablen-Inventar: alle aktuell gesetzten Werte aus Vercel auslesen, in verschlüsseltem Vault (1Password / Bitwarden Markmate) ablegen, dokumentieren welche neu gesetzt werden müssen | 0.5–1 h | — |
-| A3 | Stripe-Bestandsdaten exportieren: Customers, Subscriptions, Invoices, Products, Prices, Coupons, Payment-Methods, Tax-IDs als CSV ziehen (Stripe Dashboard → Reports) | 1 h | — |
-| A4 | Stripe-Webhook-Endpoint-Liste exportieren (alle drei aktiven Pfade + Events + Signing-Secrets) | 0.25 h | A3 |
-| A5 | Supabase: `pg_dump` der Schemas `public`, `auth`, `storage` + RLS-Policies + Storage-Bucket-Listing + Storage-Objekte (rclone/Supabase-CLI) | 1–2 h | — |
-| A6 | Supabase Auth-User-Export: über Admin-API mit Service-Role-Key, inkl. `encrypted_password` (bcrypt-Hash) — nur damit funktioniert späterer Import ohne Passwort-Reset | 0.5 h | A5 |
-| A7 | DNS-Zone von `korrekturpilot.de` als Zonefile exportieren (alle Records: A, AAAA, CNAME, MX, TXT, DKIM, SPF, DMARC) | 0.5 h | — |
-| A8 | Google-Workspace-Inventur: aktive Postfächer, Aliase, Weiterleitungen, Groups, Drive-Inhalte (im Migration-Manifest dokumentieren) | 0.5 h | — |
-| A9 | Code-Änderungen: alle gannaca-Strings ersetzen (Impressum, AGB, Datenschutz, E-Mail-Footer, SMTP-`from`, Support-Mail-Adresse, `package.json` `author` falls gesetzt) — als PR auf neuem Branch | 1–2 h | A1 |
-| A10 | Migrations-Skripte vorbereiten: `import-auth-users.ts`, `copy-storage-buckets.ts`, `stripe-customer-migration-checklist.md` | 1–2 h | A5, A6 |
-| A11 | Neuer Supabase-Projekt-Aufbau (im Markmate-Org, **siehe B5 für Org-Erstellung**): Schema aus pg_dump einspielen, RLS-Policies, Storage-Buckets neu anlegen, Auth-Settings (SMTP, Templates, Redirect-URLs) replizieren | 1.5–2.5 h | B5, A5 |
-| A12 | Storage-Daten kopieren (alte Bucket → neue Bucket, idempotent, prüfen auf vollständige Kopie) | 0.5–2 h (datenmengenabhängig) | A11 |
-| A13 | Auth-User-Import in neues Supabase (mit `encrypted_password` → kein Passwort-Reset nötig, wenn Import erfolgreich) | 0.5–1 h | A6, A11 |
-| A14 | Vercel-Projekt im Markmate-Team neu anlegen, Git-Connection auf Markmate-GitHub-Repo, alle ENV-Variablen neu setzen (Production + Preview), Build prüfen | 1–1.5 h | B4, B6 |
-| A15 | Preview-Deploy auf Wegwerf-Subdomain (`korrekturpilot-markmate.vercel.app`) testen: Login mit migriertem User, Upload, Korrektur-Flow, Stripe-Test-Checkout, Webhook-Receipt, Support-Mail | 1–2 h | A14, B9 |
-| A16 | Cut-Over-Runbook schreiben (siehe §6) | 0.5 h | — |
-| A17 | Cut-Over-Tag operativ ausführen (siehe §6) | 2–4 h | alles vorher |
-| A18 | Post-Cut-Over-Verifikation: Smoke-Tests, 24h-Monitoring, Übergabe-Doku an Moritz | 1–2 h | A17 |
-| **Summe Mel-Solo (ohne Cut-Over-Tag)** | | **~10–18 h** | |
-| **+ Cut-Over-Tag** | | **2–4 h** | |
-
----
-
-### B) CO-WORKING — Mel + Moritz LIVE (für 2FA, Account-Erstellung, KYC-Bestätigung)
-
-Diese Schritte erfordern Moritz' Telefon (2FA-SMS/Authenticator), seine E-Mail-Bestätigung oder seine ID. Live-Termin nötig (Bildschirmteilen + Telefon).
-
-| # | Aufgabe | Zeit (live) | Reine Wartezeit | Vor-Abhängigkeit |
-|---|---------|-------------|------------------|-------------------|
-| B1 | **Vorab-Voraussetzung**: Markmate GmbH (i.G.) Gründungsurkunde + HR-Auszug oder Bestätigung GbR-Anteil; Geschäfts-E-Mail für Moritz (z. B. moritz@markmate.de auf Übergangs-Workspace) | — | — | (Markmate vorab, siehe C1) |
-| B2 | **Markmate Google Workspace** erstellen (auf NEUER Domain `markmate.de`, NICHT auf `korrekturpilot.de` — sonst Lock-Konflikt beim Domain-Transfer). Admin-User = Moritz. Mel als Super-Admin temporär dazu für Migration | 0.5–1 h | DNS-Propagation 0–24 h | — |
-| B3 | E-Mail-Postfach `team@markmate.de` (oder ähnlich) aktivieren — wird für alle nachfolgenden Account-Registrierungen verwendet (KEIN privates Mel-Postfach!) | 0.25 h | — | B2 |
-| B4 | **Markmate GitHub Organization** anlegen (Plan: Team oder Free). Moritz = Owner. Mel = temporärer Admin | 0.5 h | — | B3 |
-| B5 | **Markmate Supabase Organization** anlegen, Billing auf Markmate-Karte (siehe C4). Moritz = Owner | 0.5 h | — | B3, C4 |
-| B6 | **Markmate Vercel Team** anlegen (Pro-Plan), Billing auf Markmate-Karte. Moritz = Owner | 0.5 h | — | B3, C4 |
-| B7 | **Markmate OpenAI Organization** anlegen (über `platform.openai.com` mit `team@markmate.de`). Billing-Karte hinterlegen. **API-Limit-Tier startet niedrig** (Tier 1) → ggf. höher beantragen | 0.5 h | Tier-Erhöhung: 0–7 Tage (W) | B3, C4 |
-| B8 | **Markmate Google AI / Gemini** Account (Google Cloud Project unter Markmate-Workspace, Vertex AI / AI Studio aktivieren, Billing hinterlegen) | 0.5–1 h | — | B2, C4 |
-| B9 | **Markmate Stripe Account** anlegen, KYC-Daten eingeben (Geschäftsführer-ID, Firmensitz, USt-ID, Bankverbindung) — **KYC-Prüfung läuft asynchron** | 0.5–1 h live | KYC: 1–3 Werktage (W) | B3, C2, C3 |
-| B10 | **Markmate Domain-Registrar Account** anlegen (z. B. INWX, Hetzner, Namecheap — egal welcher, Hauptsache nicht gannaca). Karte hinterlegen | 0.5 h | — | B3, C4 |
-| B11 | **GitHub Repo-Transfer** von Mel-Privat → Markmate-Org initiieren (Mel klickt „Transfer", Moritz bestätigt in der Org). Vercel-Git-Integration muss danach neu autorisiert werden | 0.5 h | — | A1–A9 fertig, B4 |
-| B12 | **Vercel-Domain hinzufügen** (Custom Domain `korrekturpilot.de` im neuen Vercel-Projekt vorbereiten — DNS-Switch passiert am Cut-Over-Tag, siehe §6) | 0.25 h | — | A14 |
-| B13 | **Stripe Webhook-Endpoints** im neuen Stripe-Konto anlegen (alle drei Pfade: `/api/webhook`, `/api/webhooks/stripe`, `/api/stripe/webhook`), Signing-Secrets in Vercel-ENV des neuen Projekts setzen | 0.5 h | — | A14, B9 (Stripe aktiviert) |
-| B14 | **Stripe Test-Mode-End-to-End**: echter Test-Checkout im Preview-Deploy, Webhook-Empfang verifizieren, DB-Eintrag prüfen, Credits-Gutschrift prüfen | 0.5–1 h | — | B13, A15 |
-| B15 | **2FA für alle neuen Markmate-Accounts** durchziehen (GitHub-Org, Vercel, Supabase, Stripe, OpenAI, Google, Registrar): Authenticator-App **auf Moritz' Gerät**, Recovery-Codes in Markmate-Vault | 1–1.5 h kumuliert | — | B4–B10 |
-| B16 | **Domain-Transfer einleiten**: bei gannaca (alter Registrar) Auth-Code anfordern → bei Markmate-Registrar (neu) Transfer-In starten → Markmate bestätigt im Postfach des neuen Registrars (= [MM]-Schritt C6) | 0.5 h | Transfer-Wartezeit: 5–7 Tage (W) | B10 |
-| B17 | **Google Workspace Domain-Hinzufügung** (sekundär): `korrekturpilot.de` als Aliasdomain in den Markmate-Workspace eintragen — geht aber erst nach Domain-Transfer (B16 abgeschlossen) oder mit DNS-Verifikation während gannaca noch Registrar ist | 0.5 h | Verifikation 0–48 h (W) | B16 abgeschlossen |
-| B18 | **Cut-Over Live-Session** (DNS-Switch, ENV-Switch, Webhook-Aktivierung) — Moritz dabei, falls 2FA bei einem Dienst greift | 1–2 h | — | alles vorher |
-| **Summe Co-Working (live)** | | **~7–11 h** | + KYC-Warte 1–3 Tage, + Transfer-Warte 5–7 Tage, + DNS-Warte ≤48 h | |
-
----
-
-### C) MARKMATE eigenständig — ohne Mel
-
-Diese Aufgaben kann nur Markmate selbst erledigen (rechtlich, finanziell, identitätsgebunden). Mel hat nichts damit zu tun — diese Zeit ist **nicht** Mel-Aufwand.
-
-| # | Aufgabe | Zeit Markmate | Reine Wartezeit | Spätester Zeitpunkt |
-|---|---------|---------------|------------------|----------------------|
-| C1 | GmbH-Gründung formal abschließen: Notarvertrag, HR-Eintragung, Stammkapital-Einzahlung — falls noch i.G., muss für KYC-Prozesse zumindest „in Gründung mit Notarurkunde" vorliegen | externer Prozess | 1–6 Wochen (W), je nach Notar/HR | **vor B9 (Stripe-KYC)** |
-| C2 | **Geschäftsbankkonto** für Markmate eröffnen (Sparkasse, Postbank, Qonto, Finom) — IBAN + Kontoauszug für Stripe-KYC nötig | 0.5–1 h Antrag | 1–14 Tage (W) | **vor B9** |
-| C3 | **Geschäfts-Kreditkarte** beantragen (oder Debit-Karte vom Geschäftskonto) — für alle SaaS-Abos | 0.25 h | 0–14 Tage (W) | **vor B5–B10** |
-| C4 | Karte / SEPA-Mandate bei jedem Dienst eintragen (Supabase, Vercel, OpenAI, Google Cloud, Stripe-Auszahlungs-IBAN, Registrar) | 0.5 h kumuliert | — | bei B-Schritten parallel |
-| C5 | **Stripe KYC einreichen**: Geschäftsführer-Ausweis (Foto), HR-Auszug, USt-ID, Adresse | 0.5–1 h | Stripe-Prüfung 1–3 Werktage (W), bei Rückfragen länger | **direkt nach B9** |
-| C6 | **Domain-Transfer-Bestätigung** im neuen Registrar-Postfach annehmen (Auth-Code wird in B16 von Mel/Moritz eingereicht, Bestätigungs-Mail geht aber an Markmate-Registrar-Postfach) | 0.1 h | 5–7 Tage Registrar-Sperre (W) | **nach B16** |
-| C7 | **Impressum, AGB, Datenschutz, Cookie-Banner** auf Markmate-Daten umschreiben (Anwalt-Review!) — fließt in A9 ein (Mel baut Texte ein, aber Markmate liefert/freigibt) | 1–3 h juristischer Aufwand | Anwalt: 1–5 Tage (W) | **vor A9-Merge** |
-| C8 | **Auftragsverarbeitungs-Verträge (AVV)** neu mit Supabase, Vercel, OpenAI, Google, Stripe abschließen (im Dashboard akzeptieren, manche per E-Mail) | 1 h | — | nach B5–B10 |
-| C9 | **Umsatzsteuer-ID / EU-OSS** beantragen (falls über DE hinaus verkauft wird) | 0.5 h Antrag | 1–4 Wochen (W) | wenn relevant, vor Live-Switch nicht zwingend |
-| C10 | **Übernahme-Vereinbarung Mel ↔ Markmate** (Software, Daten, Kundenstamm, ggf. Kaufpreis / Gesellschafterbeschluss) | extern, 1–4 h | — | **vor Cut-Over** |
-| **Summe Markmate (ohne Mel)** | | **~5–11 h Arbeit** | + 1–6 Wochen Wartezeit (parallel zu A/B) | |
-
----
-
-## 3. Kritische Reihenfolge (was MUSS vor was?)
+## Phasen-Übersicht
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 0 — Vorab (Markmate baut Basis)                              │
-│   C1 GmbH-Status   →   C2 Bankkonto   →   C3 Karte                 │
-│                                          │                          │
-│                            ─────────────┴─────────────              │
-│                            ↓ erst dann sind B-Schritte machbar      │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 1 — Account-Setup (Co-Working live)                          │
-│                                                                     │
-│   B2 Google Workspace ─→ B3 team@markmate.de                       │
-│        ↓                                                            │
-│   ┌────────────────────┴───────────────────────────────────┐       │
-│   ↓ (parallel)                                              ↓       │
-│   B4 GitHub-Org   B5 Supabase   B6 Vercel   B10 Registrar          │
-│   B7 OpenAI       B8 Gemini                                         │
-│        ↓                                                            │
-│   B9 Stripe (KYC)  →  WARTE 1–3 Tage (C5 Markmate-Side)            │
-│        ↓                                                            │
-│   B15 2FA für ALLE neu angelegten Accounts                         │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 2 — Code & Daten (Mel solo)                                  │
-│                                                                     │
-│   A1–A8 Inventur + Exporte (parallel zu Phase 1 möglich)           │
-│        ↓                                                            │
-│   A9 Code-PR mit Markmate-Strings                                  │
-│   A10 Migrations-Skripte                                            │
-│        ↓                                                            │
-│   A11 Neues Supabase befüllt   (NACH B5)                           │
-│   A12 Storage kopiert           (NACH A11)                          │
-│   A13 Auth-User importiert      (NACH A11)                          │
-│        ↓                                                            │
-│   A14 Vercel-Projekt + ENV     (NACH B6, B11)                      │
-│   B13 Webhook-Endpoints angelegt                                   │
-│        ↓                                                            │
-│   A15 + B14 Preview-Smoketests (NACH A14, B13)                     │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 3 — Domain (langsam, parallel zu Phase 2)                    │
-│                                                                     │
-│   B16 Domain-Transfer initiieren                                   │
-│        ↓                                                            │
-│   WARTE 5–7 Tage (C6 Markmate-Side)                                │
-│        ↓                                                            │
-│   B17 Google Workspace Aliasdomain hinzufügen                      │
-│        ↓                                                            │
-│   DNS-Records bei neuem Registrar replizieren (aus A7-Export)      │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│ PHASE 4 — Cut-Over (1 Tag, Reihenfolge SIEHE §6)                   │
-│                                                                     │
-│   ALLE Phasen 0–3 abgeschlossen                                    │
-│        ↓                                                            │
-│   A17 / B18 Live-Switch                                            │
-│        ↓                                                            │
-│   A18 Verifikation + Übergabe                                      │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│ PHASE 0 — SOFORT (Mel + 1x Christopher), Woche 1–2                │
+│   - Inventur, Code säubern, Mel raus aus privaten Keys           │
+│   - Markmate-Domain reservieren                                   │
+│   - Vault, Daten-Export-Skripte vorbereiten                       │
+│   - gmail-Identität konsolidieren (zugänglich für Christopher)    │
+│   ABRECHNUNG bleibt: gannaca-Karte                                │
+└───────────────────────────────────────────────────────────────────┘
+                            ↓
+┌───────────────────────────────────────────────────────────────────┐
+│ PHASE 1 — MARKMATE GRÜNDEN (C+M extern), Woche 2–8                │
+│   - Notar, HR-Eintrag, USt-ID                                     │
+│   - Geschäftsbankkonto                                             │
+│   - Geschäftskreditkarte                                           │
+│   PARALLEL möglich: Phase 0 fertigstellen                         │
+│   Mel-Aufwand: ~0 (Beratung max.)                                 │
+└───────────────────────────────────────────────────────────────────┘
+                            ↓
+┌───────────────────────────────────────────────────────────────────┐
+│ PHASE 2 — ACCOUNT-MIGRATION (Mel + CW), Woche 8–10               │
+│   - Markmate-Orgs anlegen (GitHub, Vercel, Supabase, OpenAI…)    │
+│   - Karten umstellen: gannaca → Markmate                          │
+│   - Stripe-KYC (Wartezeit 1–3 Werktage)                          │
+│   - Domain-Transfer (Wartezeit 5–7 Tage)                          │
+│   - Google Workspace Markmate                                     │
+│   - Code, Daten, Vercel-Projekt vorbereiten                       │
+└───────────────────────────────────────────────────────────────────┘
+                            ↓
+┌───────────────────────────────────────────────────────────────────┐
+│ PHASE 3 — CUT-OVER (CW 1 Tag), Woche 10                           │
+│   - DNS-Switch, ENV-Switch, Webhook-Switch                        │
+│   - 2.5–4 h, Christopher dabei für 1–2 h                          │
+└───────────────────────────────────────────────────────────────────┘
+                            ↓
+┌───────────────────────────────────────────────────────────────────┐
+│ PHASE 4 — ÜBERGABE & MEL-ABGANG, Woche 10–14                     │
+│   - 30 Tage alte Systeme paused (Rollback-Anker)                 │
+│   - Mel als Admin entfernt überall                                │
+│   - Übernahme-Vereinbarung gannaca↔Markmate                       │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-**Harte Sequenz-Gates** (verletzbar = Schaden):
-
-| Gate | Begründung |
-|------|------------|
-| C2 (Bankkonto) **vor** B9 (Stripe-Account) | Stripe braucht echte IBAN für Auszahlungs-Setup |
-| C5 (Stripe-KYC genehmigt) **vor** Cut-Over | sonst keine Live-Zahlungen möglich |
-| B2 (Google Workspace auf markmate.de) **vor** B7 (OpenAI) | OpenAI braucht E-Mail; private oder gannaca-Mail wäre fatal |
-| A6 (Auth-User-Export mit `encrypted_password`) **vor** A13 | sonst Passwort-Reset für 100% der User nötig |
-| B13 (Webhooks im neuen Stripe) **vor** Cut-Over-DNS-Switch | sonst gehen Zahlungs-Events verloren |
-| C7 (Impressum/AGB Markmate) **vor** Live-Switch | Wettbewerbsrecht / DSGVO-Risiko |
+Realistischer Kalenderkorridor: **8–14 Wochen ab heute**, dominiert durch GmbH-Gründung + Bankkonto + Stripe-KYC (alles Wartezeit).
 
 ---
 
-## 4. Daten-Migrations-Plan (Supabase)
+## Technische Inventur (verifiziert im Repo)
 
-### 4.1 Was wird 1:1 kopiert (verlustfrei)
+| Dienst | Aktuelle Lage | Env-Variablen / Endpoints |
+|--------|---------------|----------------------------|
+| **GitHub** | Repo bei Mel privat (`8melc/korrekturpilot`) | — |
+| **Supabase** | gannaca-Org, gannaca-Karte; 10 Migrationen + Storage + Auth | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
+| **Vercel** | gannaca-Team / Mel privat (zu prüfen!), gannaca-Karte | trägt alle anderen ENV |
+| **Stripe** | gannaca-Account, Auszahlung an gannaca-IBAN; **drei** aktive Webhook-Pfade im Code | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25`, `NEXT_PUBLIC_STRIPE_PRICE_ID_ONE_TIME`; Endpoints `/api/webhook`, `/api/webhooks/stripe`, `/api/stripe/webhook` |
+| **OpenAI** | Mel privat **oder** gannaca-Org (zu prüfen!), gannaca-Karte | `OPENAI_API_KEY` |
+| **Google Gemini** | Mel privat **oder** gannaca, gannaca-Karte | `GOOGLE_AI_KEY` |
+| **Domain `korrekturpilot.de`** | gannaca-Registrar | DNS-Zone |
+| **Google Workspace** | gannaca-Workspace mit Aliasdomain `korrekturpilot.de` | SMTP für Auth + Support (`SMTP_HOST/USER/PASS/FROM`) |
+| **`korrekturpilot@gmail.com`** | existiert, Owner = ? (Mel? Christopher? geteilt?) | — |
 
-| Datenkategorie | Methode | Verlust? |
-|----------------|---------|----------|
-| Schema (`public.*` Tabellen, Indizes, Constraints) | `pg_dump --schema-only` + `psql` | nein |
-| RLS-Policies + DB-Functions + Triggers | `pg_dump --schema-only` (sind Teil des Schemas) | nein |
-| Stripe-Tabellen (`001_create_stripe_tables.sql`) | als Schema | Inhalte siehe §5 |
-| `corrections` Tabelle (Daten) | `pg_dump --data-only --table=corrections` | nein |
-| `users` Tabelle inkl. Credits (`004_create_users_table_with_credits.sql`, `007`, `008`) | `pg_dump --data-only` | nein |
-| `support_requests` (`010`) | `pg_dump --data-only` | nein |
-| Storage-Buckets (Objekte) | Supabase Storage API / `rclone` via S3-kompatible Endpoints, bucketweise | nein, aber: **neue Storage-URLs** in neuem Projekt → in DB stehende absolute URLs müssen umgeschrieben werden (falls vorhanden) |
-| Storage-Policies | aus `006_create_storage_policies.sql` Migration neu ausführen | nein |
-
-### 4.2 Auth-User — kritischster Teil
-
-**Drei Optionen, in Reihenfolge der Bevorzugung:**
-
-| Option | Methode | Aufwand | User-Erlebnis |
-|--------|---------|---------|---------------|
-| **A (bevorzugt)** | Auth-User via Admin-API exportieren (inkl. `id`, `email`, `encrypted_password`, `email_confirmed_at`, `raw_user_meta_data`, `created_at`) → in neues Projekt mit `auth.admin.createUser()` + `password_hash` Parameter importieren | 0.5–1 h Skript + 0.5 h Verifikation | **Kein Passwort-Reset**, User logged sich nahtlos ein |
-| **B** | Auth-User exportieren ohne Passwort → User per Magic-Link / Passwort-Reset-Mail einladen | 0.5 h Skript + Massen-Mail | User muss neu Passwort setzen — Akzeptanz-Risiko, Support-Last |
-| **C** | Auth-User über Supabase „Project Transfer / Restore from backup" (falls Supabase das unterstützt — derzeit nur Project-Pause-Restore innerhalb derselben Org möglich) | 0 h, falls supportet | wäre verlustfrei |
-
-**Empfehlung:** Option A. `encrypted_password` ist bcrypt — exportierbar via Service-Role-Key über `auth.users` Tabelle direkt (Service-Role-Key hat Lesezugriff). Import via [Supabase Auth Admin API `createUser` mit `password_hash`](https://supabase.com/docs/reference/javascript/auth-admin-createuser).
-
-**Wenn Option A scheitert**, Fallback auf B: vorbereiteter Massen-Versand „Bitte einmal Passwort zurücksetzen — Sicherheitsupdate, Zugang bleibt".
-
-### 4.3 Was verloren geht (akzeptierter Verlust)
-
-| Verlust | Warum | Mitigation |
-|---------|-------|------------|
-| **Aktive Auth-Sessions / JWT-Tokens** | werden bei Project-Switch ungültig (neue JWT-Secrets) | User muss einmal neu einloggen — kommunizieren |
-| **Stripe-Customer-IDs** in `users.stripe_customer_id` | neue Stripe-Org hat neue Customer-IDs | siehe §5 |
-| **Supabase-Realtime-Verbindungen** (falls genutzt) | brechen einmalig ab | Frontend handled das eh |
-| **Logs / Audit-Trails in alter Supabase** | bleiben bei gannaca-Org | für Compliance: pg_dump archivieren, 10 Jahre aufbewahren |
-
-### 4.4 User-Kommunikation
-
-Eine Nachricht pro User, zeitlich VOR Cut-Over:
-> „Wir migrieren KorrekturPilot in eine neue Betreibergesellschaft (Markmate GmbH). Am [Datum] zwischen [Uhrzeit] kann es zu 15 Minuten Downtime kommen. Dein Account, deine Klausuren und dein Credits-Stand bleiben unverändert. Du musst dich nach dem Update einmal neu einloggen — dein Passwort bleibt gleich. Bei Problemen: support@markmate.de."
-
-(Falls Fallback B greift, Text anpassen: „…musst einmal ein neues Passwort setzen — Link folgt".)
+**Aktionspflicht Phase 0:** Ownership jeder Zeile dieser Tabelle eindeutig dokumentieren. „Vermutlich" reicht nicht.
 
 ---
 
-## 5. Stripe-Migration (separat, weil unübertragbar)
+## PHASE 0 — Sofort-Maßnahmen (Woche 1–2)
 
-**Harte Realität:** Stripe-Accounts sind nicht übertragbar. Customer-IDs, Subscription-IDs, Payment-Method-Tokens existieren nur im jeweiligen Account. Bestandskunden mit aktiver Subscription können nicht automatisch in den Markmate-Account „umgezogen" werden.
+Ziel: Mel raus aus privaten Identitäten, Vorbereitung der finalen Migration, gmail-Adresse als belastbare Übergangs-Identität.
 
-### 5.1 Drei Optionen, Trade-Offs
+### 0.1 Solo-Arbeit Mel
 
-| Option | Was passiert | Vorteil | Nachteil | Empfohlen für |
-|--------|--------------|---------|----------|----------------|
-| **S1 — Stripe-Support-Migration** (Data Migration) | Stripe-Support kopiert Customers + Subscriptions + Payment-Method-Tokens (PCI-Daten) von gannaca-Account → Markmate-Account, **wenn beide Accounts ihn anfragen und PCI-Compliance bestätigen** | Verlustfrei: Subscriptions laufen weiter, gleiche Zahlungsmittel | Wartezeit 2–6 Wochen, nicht garantiert, beide Accounts müssen kooperieren, asynchrone Karten-Updater erforderlich, manche Banken kündigen Mandate bei Account-Wechsel | Wenn signifikanter Subscription-Bestand existiert |
-| **S2 — Hard Switch + Re-Subscription** | Neuer Stripe-Account live ab Cut-Over, alte Subscriptions bei gannaca werden gekündigt, Bestandskunden bekommen Einladungs-Mail neu zu zeichnen (ggf. mit Rabatt-Coupon) | Sauber, schnell, klare juristische Trennung | Churn-Risiko (Kunden zeichnen nicht neu), Operations-Aufwand für Coupons | Wenn Bestand klein oder mehrheitlich Einmal-Käufer (`PACKAGE_25`, `ONE_TIME`) |
-| **S3 — Parallel-Betrieb (Übergang)** | Alte Subscriptions laufen bis Ende der Periode bei gannaca aus, neue Subscriptions/Käufe ab Cut-Over im Markmate-Account | Kein User-Erlebnis-Bruch | Doppelte Buchführung 1–12 Monate, Steuer-Komplexität (zwei Konten), zwei Stripe-Webhooks im Code | Wenn rechtlich okay, gannaca als „Auslaufmodell" für maximal 12 Monate weiterzuführen |
+| # | Aufgabe | Zeit |
+|---|---------|------|
+| 0.M.1 | **Ownership-Inventur**: für jeden Dienst (Supabase, Vercel, Stripe, OpenAI, Gemini, Domain, Workspace) Owner-E-Mail, Billing-Karte, 2FA-Methode dokumentieren. Output: Tabelle in Vault | 1–2 h |
+| 0.M.2 | **Code-Grep**: alle Stellen mit gannaca-Strings, privaten Mel-Mails, hardkodierten Account-Identifikatoren finden. Output: Liste mit Datei-Pfaden + Zeilen | 1 h |
+| 0.M.3 | **ENV-Inventar**: Vercel-ENV (Production + Preview) auslesen, in Vault. Markieren: welche Werte sind „privat Mel" (zu rotieren) vs. „gannaca-shared" | 0.5 h |
+| 0.M.4 | **Supabase-Export-Skripte vorbereiten** (laufen jetzt nur als Trockenübung): `pg_dump` Schema/Daten, Storage-Listing, Auth-User-Export mit `encrypted_password`. Output: 3 Bash-Skripte im Repo | 2–3 h |
+| 0.M.5 | **Stripe-Bestandsdaten exportieren** (Customers, Subscriptions, Invoices, Products, Prices, Coupons als CSV) — Snapshot, falls bei Migration etwas verloren geht | 1 h |
+| 0.M.6 | **DNS-Zone exportieren** als Zonefile (A, AAAA, CNAME, MX, TXT/SPF/DKIM/DMARC) — Snapshot, Quelle der Wahrheit fürs spätere Replizieren | 0.5 h |
+| 0.M.7 | **Code-PR vorbereiten** (NICHT mergen): alle gannaca-Strings durch Markmate-Platzhalter ersetzen. Branch parat für Cut-Over | 1–2 h |
+| 0.M.8 | **TTL aller DNS-Records auf 300s senken** (1 Woche vor späterem Cut-Over wirksam, aber jetzt schon harmlos) — kann auch erst in Phase 2 passieren | 0.25 h |
+| **Summe** | | **~7–10 h** |
 
-### 5.2 Welche Option für KorrekturPilot?
+### 0.2 Co-Working Mel + Christopher (1 Session, ca. 2 h)
 
-Annahme aus dem Code: Es gibt `PACKAGE_25` (25er-Credit-Paket, vermutlich Einmal-Kauf) und `ONE_TIME` (Einzelkorrektur). **Keine Subscriptions im strengen Sinne sichtbar** — beides sind Einmalzahlungen, die Credits gutschreiben.
+| # | Aufgabe | Zeit |
+|---|---------|------|
+| 0.CW.1 | **Vault aufsetzen** (1Password / Bitwarden Business, **getrennt von gannaca-Vault**) — wird Markmates Geheimnis-Speicher. Beide haben Zugang, Recovery-Codes physisch sichern | 0.5 h |
+| 0.CW.2 | **gmail-Adresse `korrekturpilot@gmail.com` konsolidieren**: Recovery-Phone auf Christophers Handy, Recovery-Mail auf Christophers Privat-Mail, 2FA auf Authenticator beider Personen, Passwort im Vault. **Ziel:** wenn Mel weg ist, Christopher hat vollen Zugriff | 0.5 h |
+| 0.CW.3 | **Markmate-Domain `markmate.de` reservieren** — auf Christopher privat (oder Mel privat) bei einem neutralen Registrar (nicht gannaca!). Kostet 10–20 €. Spätere Übertragung auf GmbH ist trivial. **Jetzt sichern, sonst Risiko, dass jemand anders die Domain kauft** | 0.5 h |
+| 0.CW.4 | **Mel-private API-Keys rotieren** (falls vorhanden im Code/Vercel-ENV): neue OpenAI- und Gemini-Keys unter gannaca-Org / gannaca-Karte generieren, alte Mel-private Keys revoken. Vercel-ENV updaten. **Damit ist Mel schon JETZT raus aus persönlichen Keys, auch ohne Markmate.** | 0.5 h |
+| **Summe** | | **~2 h live** |
 
-→ **Empfehlung: S2 (Hard Switch).** Da keine wiederkehrenden Subscriptions im Stripe-Sinne aktiv sind, sondern Einmal-Käufe für Credits, gibt es nichts zu „verlängern". Bestandskunden behalten ihre Credits (die liegen in Supabase, nicht in Stripe). Neue Käufe ab Cut-Over laufen einfach über den neuen Account.
+### 0.3 Markmate / Christopher solo (parallel oder vor Phase 1)
 
-**Falls doch echte Recurring-Subscriptions existieren** (bitte vorab Stripe-Dashboard prüfen: `Customers` → `Active subscriptions` Filter): dann S1 als Plan A, S3 als Fallback wenn Stripe-Support ablehnt.
+| # | Aufgabe | Zeit |
+|---|---------|------|
+| 0.MM.1 | **Anwalt + Notar terminieren** für GmbH-Gründung | 0.5 h Calls |
+| 0.MM.2 | **Bank vorbeurteilen lassen** (Qonto, Finom, Postbank, Sparkasse): welche bietet Geschäftskonto für GmbH i.G. mit kurzer TTL? | 0.5 h |
 
-### 5.3 Konkrete Schritte (für S2)
+### 0.4 Was am Ende von Phase 0 erreicht ist
 
-| # | Schritt | Wer |
-|---|---------|-----|
-| 5.S2.1 | Im alten Stripe-Konto: alle Produkte + Preise inkl. IDs exportieren | [M] |
-| 5.S2.2 | Im neuen Stripe-Konto: identische Produkte + Preise neu anlegen (mit Stripe-CLI oder manuell) → **NEUE Price-IDs** | [CW] |
-| 5.S2.3 | Vercel-ENV: `NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25` + `NEXT_PUBLIC_STRIPE_PRICE_ID_ONE_TIME` auf neue Werte setzen | [M] |
-| 5.S2.4 | `STRIPE_SECRET_KEY` (neu) + `STRIPE_WEBHOOK_SECRET` (neu) in Vercel setzen | [M] |
-| 5.S2.5 | Alle drei Webhook-Endpoints im neuen Stripe-Dashboard registrieren | [CW] B13 |
-| 5.S2.6 | Im alten Stripe: nach Cut-Over alle aktiven Subscriptions (falls vorhanden) auf `cancel_at_period_end=true` setzen | [M] post-cut |
-| 5.S2.7 | Idempotenz: Webhook-Handler im Code prüfen — `event.id` als Idempotency-Key? Falls nein, kurze Phase aufpassen, dass keine Doppel-Credits gebucht werden | [M] (Code-Review) |
-| 5.S2.8 | Stripe-Tax-Setup (USt) im neuen Konto neu konfigurieren | [MM] |
+- Vollständige Inventur, alle Geheimnisse im Markmate-Vault.
+- Markmate-Domain gesichert.
+- Mel raus aus persönlichen Keys.
+- Gmail-Identität für Christopher zugänglich (Bus-Faktor > 1).
+- Snapshots aller Daten gezogen (zur Sicherheit, falls in Phase 2 etwas schiefgeht).
+- Code-PR-Branch mit Markmate-Strings liegt bereit.
 
-### 5.4 Wichtige Gotchas
-
-- **Idempotency-Keys** sind pro Account! Wenn der Code `event.id` als Schlüssel speichert, kollidieren alte und neue Events nicht — aber wenn `request.idempotency-key` clientseitig generiert wird, neu prüfen.
-- **Webhook-Signing-Secrets** sind pro Endpoint, nicht pro Account. Für drei Pfade → drei neue Secrets.
-- **Stripe Customer Portal** muss im neuen Konto neu konfiguriert werden (Branding, Cancellation-Settings).
-- **Bank-Auszahlungs-IBAN** im neuen Stripe-Konto = Markmate-Konto (nie gannaca!).
+**Phase 0 ist eigenständig wertvoll**, auch wenn Markmate-Gründung sich verzögert. Mel ist danach schon zu 30 % „raus".
 
 ---
 
-## 6. Cut-Over-Plan (Migrationstag)
+## PHASE 1 — Markmate-Gründung (Woche 2–8, Wartezeit)
 
-**Voraussetzung:** Alle Phasen 0–3 abgeschlossen, Preview-Smoketests grün, Stripe-KYC genehmigt, Domain-Transfer abgeschlossen.
+Reiner Markmate-Prozess. Mel ist nicht beteiligt (außer Gründungs­vertrag mitunter­zeichnen, falls Gesellschafter).
 
-**Dauer:** 2–4 h für Mel, Moritz ≥ 1 h dabei verfügbar.
+| # | Aufgabe | Akteur | Wartezeit |
+|---|---------|--------|-----------|
+| 1.MM.1 | Notarvertrag aufsetzen + beurkunden | Notar + C+M | 0.5–2 Wochen (W) |
+| 1.MM.2 | Stammkapital einzahlen (Gründungskonto bei Bank) | C+M | 0.5–1 Woche (W) |
+| 1.MM.3 | Handelsregister-Eintragung | Amtsgericht | 1–4 Wochen (W) |
+| 1.MM.4 | Steuerliche Anmeldung beim Finanzamt, USt-ID beantragen | Steuerberater | 1–4 Wochen (W) |
+| 1.MM.5 | Geschäftsbankkonto endgültig eröffnen (nach HR-Eintrag) | C+M | 1–2 Wochen (W) |
+| 1.MM.6 | Geschäftskreditkarte (Debit oder Credit) ausstellen lassen | Bank | 1–2 Wochen (W) |
+| 1.MM.7 | **Übernahme-Vereinbarung gannaca ↔ Markmate** entwerfen (Kaufpreis Software / Daten / Kundenstamm, Stichtag, IP-Übergang) | Anwalt + C+M | 1–3 Wochen (W) parallel |
+| 1.MM.8 | Impressum, AGB, Datenschutz, DPA-Templates für Markmate vorbereiten (Anwalt) | Anwalt | 1–2 Wochen (W) parallel |
+| **Kalenderdauer Phase 1** | | | **4–10 Wochen** |
 
-**Empfohlenes Zeitfenster:** Sonntag früh 06:00–10:00 (niedrige Last, keine Lehrer arbeiten).
+**Mel-Aufwand in Phase 1: nahezu 0.** Beratung max., kein operativer Aufwand.
 
-### 6.1 T-7 Tage (vorbereitend)
+**Wichtig:** Phase 0 muss in Woche 1–2 starten und kann parallel zu Phase 1 abgeschlossen sein. So sind in Woche 8 (Idealfall) sowohl Markmate gegründet als auch alles für die technische Migration vorbereitet.
+
+---
+
+## PHASE 2 — Account-Migration (Woche 8–10, nach GmbH-Eintrag + Karte)
+
+Voraussetzung: HR-Eintrag liegt vor, Geschäftskonto + Karte verfügbar.
+
+### 2.1 Solo-Arbeit Mel
+
+| # | Aufgabe | Zeit | Abhängigkeit |
+|---|---------|------|--------------|
+| 2.M.1 | **Neues Supabase-Projekt** (Markmate-Org) aufsetzen: Schema einspielen (aus 0.M.4), RLS-Policies, Storage-Buckets neu anlegen, Auth-Settings (SMTP, Templates, Redirect-URLs) replizieren | 1.5–2.5 h | 2.CW.3 |
+| 2.M.2 | **Storage-Daten kopieren** (alt → neu, idempotent, Count-Verifikation) | 0.5–2 h | 2.M.1 |
+| 2.M.3 | **Auth-User importieren** mit `encrypted_password` → kein Passwort-Reset für User | 0.5–1 h | 2.M.1, 0.M.4 |
+| 2.M.4 | **Neues Vercel-Projekt** (Markmate-Team), Git-Connection auf Markmate-GitHub-Repo, alle ENV-Variablen neu setzen | 1–1.5 h | 2.CW.2, 2.CW.4 |
+| 2.M.5 | **Code-PR mergen** (aus 0.M.7): Impressum, AGB, Datenschutz, Mailer-`from`, Support-Mail-Adresse, README → Markmate-Daten | 0.5 h | 1.MM.8 (Texte da) |
+| 2.M.6 | **DNS-Zone bei Markmate-Registrar replizieren** (aus 0.M.6 Zonefile), TTL auf 300s | 0.5 h | 2.CW.6 |
+| 2.M.7 | **Preview-Deploy-Tests**: Login mit migriertem User, Upload, Korrektur-Flow, Stripe-Test-Checkout, Webhook-Receipt, Support-Mail | 1–2 h | 2.M.1–2.M.4, 2.CW.5 |
+| 2.M.8 | **Cut-Over-Runbook** schreiben (siehe §3) | 0.5 h | — |
+| **Summe** | | **~6–10 h** | |
+
+### 2.2 Co-Working Mel + Christopher (3–4 Sessions)
+
+| # | Aufgabe | Zeit live | Wartezeit |
+|---|---------|-----------|-----------|
+| 2.CW.1 | **Markmate Google Workspace** auf `markmate.de` einrichten, Admin = Christopher, Mel temporär Super-Admin. Postfach `team@markmate.de` | 1 h | DNS-Verify 0–24 h (W) |
+| 2.CW.2 | **Markmate GitHub Organization** anlegen, Plan wählen, Christopher = Owner | 0.25 h | — |
+| 2.CW.3 | **Markmate Supabase Organization** anlegen, **Markmate-Karte** hinterlegen | 0.25 h | — |
+| 2.CW.4 | **Markmate Vercel Team** (Pro-Plan), Markmate-Karte | 0.25 h | — |
+| 2.CW.5 | **Stripe Markmate-Account** anlegen, KYC-Daten eingeben (HR-Auszug, GF-Ausweis, USt-ID, IBAN, Markmate-Adresse) | 0.5–1 h | KYC 1–3 Werktage (W) |
+| 2.CW.6 | **Markmate-Domain-Registrar-Account** für `korrekturpilot.de`-Transfer-Ziel anlegen, Karte hinterlegen | 0.25 h | — |
+| 2.CW.7 | **OpenAI-Org auf `team@markmate.de` migrieren** ODER neue Markmate-Org anlegen — beide Optionen prüfen (Org-Owner-Wechsel in OpenAI ist möglich); Karte gannaca → Markmate tauschen; $50–100 Prepaid → Tier 2 | 0.5–1 h | Tier-Erhöhung 0–7 Tage (W) |
+| 2.CW.8 | **Google Cloud / Gemini**: neues GCP-Projekt unter Markmate-Workspace, Markmate-Billing-Konto, API aktivieren, neue Keys generieren | 0.5–1 h | — |
+| 2.CW.9 | **Repo-Transfer GitHub** Mel-Privat → Markmate-Org (Mel klickt Transfer, Christopher bestätigt). Vercel-GitHub-Integration neu autorisieren | 0.5 h | — |
+| 2.CW.10 | **Vercel-Custom-Domain** `korrekturpilot.de` im neuen Projekt vorbereiten (DNS-Switch erst beim Cut-Over) | 0.25 h | — |
+| 2.CW.11 | **Stripe-Webhook-Endpoints** im neuen Stripe anlegen — **alle drei Pfade** (`/api/webhook`, `/api/webhooks/stripe`, `/api/stripe/webhook`), Signing-Secrets in Vercel-ENV des neuen Projekts | 0.5 h | nach 2.CW.5 KYC-Freigabe |
+| 2.CW.12 | **Stripe-Produkte + Preise** im neuen Konto identisch neu anlegen → neue Price-IDs notieren, in Vercel-ENV setzen (`NEXT_PUBLIC_STRIPE_PRICE_ID_*`) | 0.5 h | — |
+| 2.CW.13 | **2FA für alle Markmate-Accounts**: Authenticator-App auf Christophers Gerät (zusätzlich Mel temporär), Recovery-Codes im Vault | 1 h kumuliert | — |
+| 2.CW.14 | **Domain-Transfer einleiten**: bei gannaca-Registrar Whois-Unlock + AuthCode anfordern → bei Markmate-Registrar Transfer-In starten → Bestätigungs-Mail im Markmate-Registrar-Postfach beantworten | 0.5 h | Registrar-Sperre 5–7 Tage (W) |
+| 2.CW.15 | **Karten-Switch bei gannaca-Konten**: bei jedem aktuellen gannaca-Account (Supabase-gannaca-Org, Vercel-gannaca-Team etc.) Billing-Karte austauschen ist **NICHT der Pfad** — stattdessen neue Markmate-Orgs nutzen (siehe oben). Für Phase 2 muss aber gannaca-Karte bei alten Orgs **bleiben**, bis Cut-Over abgeschlossen ist (Service darf nicht ausfallen) | 0 h | — |
+| 2.CW.16 | **Stripe-Live-Test** (1 € echter Checkout mit Markmate-Karte, danach Refund) | 0.5 h | — |
+| **Summe live** | | **~6–8 h verteilt auf 3–4 Sessions** | |
+
+### 2.3 Markmate / Christopher solo
+
+| # | Aufgabe | Zeit | Wartezeit |
+|---|---------|------|-----------|
+| 2.MM.1 | KYC-Dokumente bei Stripe einreichen (Pass/Perso GF, HR-Auszug, USt-Bescheid, IBAN-Nachweis) | 0.5–1 h | Stripe-Prüfung 1–3 WT (W) |
+| 2.MM.2 | AVV (Auftrags­verarbeitungs-Verträge) im jeweiligen Dashboard akzeptieren: Supabase, Vercel, OpenAI, Google Cloud, Stripe | 1 h | — |
+| 2.MM.3 | Domain-Transfer-Bestätigung im neuen Registrar-Postfach annehmen | 0.1 h | — |
+| 2.MM.4 | Anwalt-Review: finale Impressum/AGB/DP-Texte freigeben (für 2.M.5) | extern | 1–5 Tage (W) |
+| 2.MM.5 | User-Kommunikations-Mail freigeben (Migrations-Ankündigung, siehe §4.4) | 0.25 h | — |
+| **Summe** | | **~2–3 h** | |
+
+---
+
+## PHASE 3 — Cut-Over (1 Tag, Co-Working)
+
+Voraussetzung: alles aus Phase 2 grün, Preview-Smoketests bestanden, Stripe-KYC durch, Domain transferiert, DNS-TTL ≥ 1 Woche auf 300s.
+
+Zeitfenster: **Sonntag früh 06:00–10:00** (niedrige Last).
+
+### 3.1 T-7 Tage (vorbereitend)
 
 | # | Aktion | Wer |
 |---|--------|-----|
-| CO-1 | Banner / Email an User: „Am [Datum] 06:00–10:00 ggf. kurze Downtime. Bitte einmal nach dem Update neu einloggen." | [M] |
-| CO-2 | DNS-TTL aller relevanten Records senken auf 300s (5 Min) — sonst dauert Propagation länger | [M] (am alten Registrar, vor Transfer) |
-| CO-3 | Alle ENV-Variablen im neuen Vercel-Projekt final verifizieren | [M] |
-| CO-4 | Letzten `pg_dump` und Storage-Sync 1 Tag vor Cut-Over laufen lassen (Delta beim eigentlichen Cut-Over kleiner) | [M] |
+| 3.CO-1 | User-Banner + Mail: „Am [Datum] 06:00–10:00 ggf. 15 Min Downtime, einmal neu einloggen" | [M] |
+| 3.CO-2 | Finale DNS-TTL-Verifikation (alle Records auf 300s) | [M] |
+| 3.CO-3 | Alle ENV im neuen Vercel-Projekt nochmal durchgehen | [M] |
+| 3.CO-4 | Letzter pg_dump + Storage-Sync 1 Tag vor Cut-Over (Delta beim Cut-Over kleiner) | [M] |
 
-### 6.2 T-0 (Cut-Over-Tag) — Reihenfolge
+### 3.2 T-0 Cut-Over-Tag — Reihenfolge
 
-Der Punkt ohne Wiederkehr liegt bei **Schritt 9** (DNS-Switch). Davor: voll rückrollbar.
+Der Point of No Return liegt bei **Schritt 9** (DNS-Switch). Davor: voll rückrollbar.
 
-| # | Aktion | Dauer | Wer | Rollback möglich? |
-|---|--------|-------|-----|--------------------|
-| 1 | **T-30min: Maintenance-Banner** aktivieren im laufenden Live-System („Update läuft, kurze Auszeit") | 5 min | [M] | ja |
-| 2 | Stripe-Webhooks im **alten** Konto auf „disabled" stellen (verhindert weitere Doppel-Events) | 5 min | [M] | ja, wieder enablen |
-| 3 | Final-Delta-`pg_dump` (nur Tabellen mit `updated_at > letzter_dump`) + Storage-Sync der letzten 24h | 15–30 min | [M] | ja |
-| 4 | Delta in neues Supabase einspielen (idempotent: `INSERT … ON CONFLICT UPDATE`) | 10 min | [M] | ja (alte DB intakt) |
-| 5 | Auth-User-Delta nachziehen (neue Registrierungen seit A13) | 10 min | [M] | ja |
-| 6 | Verifikations-Skript: zähle Rows pro Tabelle alt vs. neu, vergleiche Storage-Object-Counts | 10 min | [M] | n/a |
-| 7 | **Smoke-Test auf Preview-Subdomain** (nicht Prod!): Login mit migriertem Test-User, Upload, Stripe-Test-Checkout | 15 min | [M] | ja |
-| 8 | Vercel: Custom Domain `korrekturpilot.de` im neuen Projekt auf „Production" setzen, Vercel zeigt benötigte DNS-Werte | 5 min | [M] | ja, Domain noch nicht aktiv |
-| 9 | 🚨 **POINT OF NO RETURN: DNS-Switch.** Am Markmate-Registrar (B10): A-Record / CNAME auf neue Vercel-Adresse umstellen. Mit TTL 300s | 5 min | [M] / [CW] falls 2FA bei Registrar greift | nur via DNS-Rollback (5–60 min) |
-| 10 | DNS-Propagation abwarten (`dig korrekturpilot.de @8.8.8.8` und `@1.1.1.1` prüfen, mehrere Resolver) | 10–60 min (W) | [M] beobachtet | — |
-| 11 | Vercel-Domain-Status auf „Ready" verifizieren (SSL-Cert auto-issued via Let's Encrypt) | 5 min | [M] | — |
-| 12 | Stripe-Webhooks im **neuen** Konto auf „enabled" stellen | 5 min | [M] | ja |
-| 13 | Stripe-Test: 1 € Live-Test-Checkout mit echter Karte (Markmate-Karte oder Moritz' Karte), Webhook-Receipt prüfen, Credits-Gutschrift prüfen, **Refund danach** | 15 min | [M] + [CW] | n/a |
-| 14 | Old Vercel Project: auf „archived" / Deployment „pause" — aber Projekt NICHT löschen (Rollback-Anker) | 5 min | [M] | jederzeit wieder aktivieren |
-| 15 | Maintenance-Banner entfernen, „Wir sind zurück"-Mail an aktive User | 5 min | [M] | ja |
-| 16 | **24h-Monitoring**: Vercel-Logs, Supabase-Logs, Stripe-Webhook-Dashboard, OpenAI/Gemini-Usage | passiv | [M] | — |
-| **Cut-Over-Dauer netto** | | **~2.5–4 h** | | |
+| # | Aktion | Dauer | Wer | Rollback |
+|---|--------|-------|-----|----------|
+| 1 | Maintenance-Banner aktivieren | 5 min | [M] | ja |
+| 2 | Stripe-Webhooks im **alten** (gannaca) Konto disablen | 5 min | [M] | ja |
+| 3 | Final-Delta-pg_dump (Tabellen mit `updated_at > letzter_dump`) + Storage-Sync der letzten 24 h | 15–30 min | [M] | ja |
+| 4 | Delta in neue Supabase einspielen, idempotent (`INSERT … ON CONFLICT UPDATE`) | 10 min | [M] | ja |
+| 5 | Auth-User-Delta (neue Registrierungen seit 2.M.3) nachziehen | 10 min | [M] | ja |
+| 6 | Verifikations-Skript: Row-Counts alt vs. neu, Storage-Object-Counts | 10 min | [M] | n/a |
+| 7 | Preview-Smoke-Test mit migriertem Test-User | 15 min | [M] | ja |
+| 8 | Vercel: Custom Domain `korrekturpilot.de` im neuen Projekt auf Production setzen (DNS-Werte ablesen) | 5 min | [M] | ja |
+| 9 | 🚨 **DNS-Switch**: Bei Markmate-Registrar A-Record / CNAME auf neue Vercel-Adresse umstellen | 5 min | [M] / [CW] falls 2FA | nur via DNS-Rollback |
+| 10 | DNS-Propagation: `dig` gegen 8.8.8.8 und 1.1.1.1 abwarten | 10–60 min (W) | [M] beobachtet | — |
+| 11 | Vercel-Domain-Status „Ready" + SSL-Cert verifiziert | 5 min | [M] | — |
+| 12 | Stripe-Webhooks im **neuen** Konto enablen | 5 min | [M] | ja |
+| 13 | Stripe-Live-Test: 1 € echter Checkout mit Christophers Karte, Webhook-Receipt, Credits-Gutschrift, danach Refund | 15 min | [M] + [CW] | n/a |
+| 14 | **MX-Records umstellen** auf Markmate-Google-Workspace (falls Workspace-Wechsel zeitgleich passiert; sonst MX bleibt vorerst gannaca, separater späterer Schnitt) | 5 min | [M] | ja |
+| 15 | Altes Vercel-Projekt (gannaca) auf „paused" (NICHT löschen) | 5 min | [M] | jederzeit reaktivierbar |
+| 16 | Maintenance-Banner entfernen, „Wir sind zurück"-Mail | 5 min | [M] | ja |
+| 17 | 24h-Monitoring: Vercel-Logs, Supabase-Logs, Stripe-Webhook-Dashboard, OpenAI/Gemini-Usage | passiv | [M] | — |
+| **Cut-Over netto** | | **~2.5–4 h** | | |
 
-### 6.3 Rollback-Plan (falls Schritt 9–13 schiefläuft)
+### 3.3 Rollback-Plan (falls 9–13 schiefläuft)
 
-Sofortige Aktion, in Reihenfolge:
+1. DNS-Switch zurück (TTL 300s ⇒ max 5 Min Propagation).
+2. Stripe-Webhooks im neuen Konto disablen, im alten re-enablen.
+3. Vercel: altes Projekt wieder als Production.
+4. Maintenance-Banner aktiv lassen.
+5. Post-mortem, neuer Cut-Over-Termin.
 
-1. **DNS-Switch zurück** auf gannaca-Vercel (TTL 300s = max. 5 Min Propagation): direkter Schaden gestoppt.
-2. Stripe-Webhooks im neuen Konto: disable. Im alten: re-enable.
-3. Vercel: altes Projekt wieder als „Production".
-4. Maintenance-Banner aktiv lassen bis Root-Cause klar.
-5. Post-mortem, neuer Cut-Over-Termin 1 Woche später.
-
-**Wichtig:** Solange die alte Supabase, alte Stripe-Konfig und altes Vercel-Projekt **nicht** gelöscht sind, ist Rollback < 30 Min möglich. Daher: alte Systeme **mindestens 30 Tage** parallel halten (paused, nicht deleted).
+Solange alte Supabase, alte Stripe-Konfig, altes Vercel-Projekt **nicht gelöscht** → Rollback < 30 Min jederzeit möglich. **Daher: alte Systeme mindestens 30 Tage paused parallel halten.**
 
 ---
 
-## 7. Risiko-Liste
+## PHASE 4 — Übergabe und Mel-Abgang (Woche 10–14)
+
+| # | Aufgabe | Wer |
+|---|---------|-----|
+| 4.1 | 30 Tage Monitoring auf neuer Infra, gannaca-Systeme paused als Rollback-Anker | [M] passiv + [CW] |
+| 4.2 | Übergabe-Doku für Christopher (nicht-techn.): Vault-Übersicht, Monatskosten-Liste, „Wenn etwas brennt"-Notfallkarte, externer Dienstleister-Kontakt | [M] |
+| 4.3 | Mel aus allen Markmate-Orgs als Admin entfernt: GitHub, Vercel, Supabase, Stripe, Google Workspace, Registrar, OpenAI, GCP | [CW] |
+| 4.4 | gannaca-Stripe-Webhooks deaktivieren, gannaca-Stripe-Account ggf. schließen / für 10 J. archivieren (HGB-Aufbewahrung) | [MM] |
+| 4.5 | gannaca-Workspace-Aliasdomain `korrekturpilot.de` entfernen | [MM] |
+| 4.6 | gannaca-Supabase-Projekt nach 30 Tagen löschen (oder behalten als Archiv) | [MM] |
+| 4.7 | Übernahme-Vereinbarung unterzeichnet, IP-Übergang dokumentiert | [MM] |
+| **Mel-Aufwand Phase 4** | **~3–5 h verteilt über 30 Tage** | |
+
+---
+
+## §4 — Daten-Migration Supabase (Detail)
+
+### 4.1 Was wird verlustfrei kopiert
+
+| Datenkategorie | Methode |
+|----------------|---------|
+| Schema (`public.*`, Indizes, Constraints) | `pg_dump --schema-only` + `psql` |
+| RLS-Policies, DB-Functions, Triggers | Teil des Schemas, kommt mit |
+| Tabellendaten (`corrections`, `users`/Credits, `support_requests`, Stripe-Tabellen aus Migrationen 001–010) | `pg_dump --data-only` |
+| Storage-Buckets (Objekte) | Supabase Storage API / `rclone` S3-kompatibel |
+| Storage-Policies (`006_create_storage_policies.sql`) | Migration neu ausführen |
+
+### 4.2 Auth-User — drei Pfade
+
+| Option | Methode | Aufwand | User-Erlebnis |
+|--------|---------|---------|---------------|
+| **A (Default)** | Auth-User-Export aus `auth.users` inkl. `encrypted_password` (bcrypt) → Import via Admin-API `createUser` mit `password_hash` Parameter | 1 h Skript + Test | nahtlos, kein Passwort-Reset |
+| **B (Fallback)** | Export ohne Passwort → Massen-Reset-Mail | 0.5 h + Comms | User setzt neues Passwort, Support-Last erwartbar |
+| **C** | Supabase Project-Transfer-Feature (innerhalb Org) — passt nicht für Org-Wechsel | — | — |
+
+**Empfehlung: A.** Vorab mit 5 Test-Usern auf Preview-Projekt verifizieren, dass bcrypt-Hash-Import funktioniert.
+
+### 4.3 Was verloren geht (akzeptiert)
+
+| Verlust | Mitigation |
+|---------|------------|
+| Aktive JWT-Sessions | User loggt einmal neu ein (im User-Comms-Mail kommuniziert) |
+| Stripe-Customer-IDs in `users.stripe_customer_id` | siehe §5 (Stripe) |
+| Logs / Audit-Trail in alter Supabase | pg_dump archivieren, 10 J. aufbewahren |
+| Realtime-Verbindungen | brechen einmalig ab |
+
+### 4.4 User-Kommunikation (Beispiel-Text)
+
+> Wir migrieren KorrekturPilot in eine neue Betreibergesellschaft (Markmate GmbH). Am [Datum] zwischen [06:00–10:00] kann es zu ca. 15 Minuten Downtime kommen. Dein Account, deine Klausuren und dein Credits-Stand bleiben unverändert. Bitte logge dich nach dem Update einmal neu ein — dein Passwort bleibt gleich. Bei Problemen: support@korrekturpilot.de.
+
+---
+
+## §5 — Stripe-Migration (Detail)
+
+**Harte Realität:** Stripe-Accounts sind nicht übertragbar. Customer-, Subscription-, Payment-Method-Tokens existieren nur im jeweiligen Account.
+
+### 5.1 Drei Optionen
+
+| Option | Was | Vorteil | Nachteil | Passt zu KorrekturPilot? |
+|--------|-----|---------|----------|---------------------------|
+| **S1 — Stripe-Support-Migration** | Stripe-Support kopiert Customers + Subscriptions + Payment-Method-Tokens zwischen Accounts | verlustfrei, Subscriptions laufen weiter | 2–6 Wo Wartezeit, beide Accounts müssen kooperieren, nicht garantiert | nur wenn echte Recurring-Subscriptions |
+| **S2 — Hard-Switch + Re-Subscribe** | gannaca-Stripe Webhooks aus, neuer Account live; alte Subs auslaufen / kündigen | sauber, schnell | Churn-Risiko bei Recurring-Subs | **ja**, weil Käufe Einmal-Käufe sind (PACKAGE_25, ONE_TIME) |
+| **S3 — Parallel-Betrieb** | Alte Subs laufen bei gannaca aus, neue Käufe ab Cut-Over bei Markmate | kein User-Bruch | Doppel-Buchführung 1–12 Mo, Steuer-Komplexität | als Fallback denkbar |
+
+### 5.2 Empfehlung für KorrekturPilot
+
+Aus Code-Befund: zwei Price-IDs (`PACKAGE_25`, `ONE_TIME`) — beides **Einmalzahlungen**, Credits liegen in Supabase. **Keine echten Recurring-Subscriptions** sichtbar.
+
+→ **S2 (Hard-Switch).** Bestandskunden behalten ihre Credits in Supabase. Neue Käufe ab Cut-Over über Markmate-Stripe.
+
+→ **Vorab verifizieren:** im aktuellen Stripe-Dashboard prüfen, ob es `Subscriptions` mit Status `active` gibt. Falls ja → Fallback S1 prüfen.
+
+### 5.3 Konkrete S2-Schritte
+
+| # | Schritt | Wer |
+|---|---------|-----|
+| 5.1 | Alte Produkte + Preise + IDs exportieren | [M] |
+| 5.2 | Im neuen Stripe identische Produkte + Preise anlegen → neue Price-IDs | [CW] 2.CW.12 |
+| 5.3 | `NEXT_PUBLIC_STRIPE_PRICE_ID_*` in Vercel-ENV auf neue Werte | [M] |
+| 5.4 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (neu) in Vercel | [M] |
+| 5.5 | Alle drei Webhook-Pfade im neuen Stripe registrieren | [CW] 2.CW.11 |
+| 5.6 | Nach Cut-Over: alte Subs (falls vorhanden) auf `cancel_at_period_end=true` | [M] |
+| 5.7 | Idempotency: Webhook-Handler prüft `event.account` + `event.id` → keine Doppel-Buchungen | [M] Code-Review |
+| 5.8 | Stripe-Tax (DE 19%, EU-OSS) im neuen Konto konfigurieren | [MM] |
+| 5.9 | Customer-Portal neu konfigurieren (Branding, Cancellation) | [CW] |
+| 5.10 | Bank-Auszahlungs-IBAN = Markmate-Konto | [MM] |
+
+---
+
+## §6 — Risiko-Liste
 
 | # | Risiko | Wahrscheinlichkeit | Impact | Mitigation |
 |---|--------|---------------------|--------|------------|
-| R1 | **Webhook-Events während Cut-Over verloren** (Käufe zwischen „alt disabled" und „neu enabled") | hoch in der 30-min-Lücke | mittel (User-zahlt-aber-keine-Credits) | Maintenance-Banner blockt Checkout-Klicks; Stripe-Dashboard auf Webhook-Failures monitoren; manuelle Nacharbeit für Fenster-Käufe |
-| R2 | **OpenAI Rate-Limit** auf neuem Konto (Tier 1 = 500 RPM, 90.000 TPM bei GPT-4.x) | hoch | hoch (App bricht ein bei Lastspitze) | Tier-Erhöhung 7 Tage vorher beantragen, $50 Prepaid sofort einzahlen → Tier 2; Fallback-Logik im Code (Gemini als Fallback) |
-| R3 | **DNS-Propagation > 60 Min** bei alten ISPs / Corporate Caches | mittel | mittel | TTL 300s eine Woche vorher gesetzt; Status-Page Hinweis; manuelle `/etc/hosts`-Anleitung für betroffene User |
-| R4 | **Auth-Password-Hash-Import scheitert** (bcrypt-Version-Mismatch) | mittel | hoch (alle User müssen Passwort resetten) | Fallback B (Passwort-Reset-Massen-Mail) vorbereitet; mit 5 Test-Usern auf Preview-Projekt vorab verifizieren |
-| R5 | **Stripe-KYC dauert > 5 Werktage** wegen Rückfragen | mittel | hoch (Cut-Over verzögert) | KYC 14 Tage vor geplantem Cut-Over einreichen; Dokumente vorbereiten: HR-Auszug, Geschäftsführer-Ausweis (beidseitig), Bank-Statement, USt-Bescheid |
-| R6 | **Domain-Transfer wird vom alten Registrar verzögert** (Email-Bestätigung übersehen, AuthCode falsch) | mittel | hoch (Cut-Over verzögert) | Domain-Transfer 14 Tage vor Cut-Over starten; AuthCode-Anforderung bei gannaca-Registrar dokumentieren |
-| R7 | **Stripe-Idempotenz-Kollision** zwischen alten/neuen Events | niedrig | mittel | Webhook-Handler prüft `event.account` + `event.id`; alte Events mit alter Account-ID werden abgewiesen |
-| R8 | **Storage-Bucket-URLs hartkodiert in Datenbank-Rows** (z. B. PDF-Links zu alten Supabase-URLs) | mittel | mittel (alte Korrekturen nicht mehr abrufbar) | Vor A12: grep in DB nach alter Supabase-URL; nach Migration: UPDATE-Statement Tausch alte→neue URL |
-| R9 | **Google Workspace MX-Records am Cut-Over-Tag falsch** → eingehende Support-Mails verloren | mittel | hoch | MX-Switch **eine Woche vor** Cut-Over auf neue Workspace (beide Workspaces parallel mit Catchall); Auto-Forward während Übergang |
-| R10 | **Markmate-Bankkonto noch nicht eröffnet** am Stripe-KYC-Tag | mittel | hoch (KYC verzögert) | C2 als allererster Markmate-Schritt; ggf. übergangsweise mit Notar-Treuhandkonto-Bestätigung |
-| R11 | **SMTP für Support-/Auth-Mails** (gannaca-Workspace) bricht bei Workspace-Übergang | hoch | hoch (User bekommen keine Mails) | Übergangs-SMTP-Provider (Resend, Mailgun) für 30 Tage parallel; SPF/DKIM/DMARC sorgfältig neu setzen |
-| R12 | **Mel-private API-Keys** (OpenAI, Gemini) noch im Code/Git-History | hoch (oft so) | sehr hoch (Datenleck) | A1-Inventur findet das, Keys rotiert vor Git-Push auf neuen Repo; alte Keys revoke nach Cut-Over |
-| R13 | **Vercel-Build-Cache** des neuen Projekts noch leer → erster Build langsam | niedrig | niedrig | Cut-Over-Vorabbuild laufen lassen |
-| R14 | **OpenAI/Gemini Org-Verify** dauert wegen Telefon-Verifikation | niedrig | mittel | Moritz' Handy bereit halten in B7/B8 |
-| R15 | **Steuerlich:** Übergang gannaca→Markmate ohne Aktivkauf-Vertrag = potentiell verdeckte Gewinnausschüttung | mittel | hoch (juristisch) | C10 Übernahme-Vereinbarung mit Steuerberater **vor** Cut-Over |
+| R1 | **Markmate-GmbH-Gründung verzögert** (Notar, HR-Eintrag) | hoch | hoch (gesamter Plan stockt) | Phase 0 sofort starten, davon ist viel auch ohne Markmate wertvoll |
+| R2 | **Markmate-Bankkonto-Eröffnung dauert** | mittel | hoch | mehrere Banken parallel anfragen (Qonto + traditionelle Bank) |
+| R3 | **Stripe-KYC dauert > 5 WT** wegen Rückfragen | mittel | hoch | KYC 14 Tage vor Cut-Over einreichen, alle Dokumente parat |
+| R4 | **Webhook-Events während Cut-Over verloren** (in 30-min-Lücke) | hoch | mittel | Maintenance-Banner blockt Checkout, Failure-Monitoring, manuelle Nacharbeit |
+| R5 | **OpenAI Rate-Limit Tier 1** auf neuem Konto | hoch | hoch | $50–100 Prepaid 14 Tage vorher → Tier 2 |
+| R6 | **DNS-Propagation > 60 Min** | mittel | mittel | TTL 300s eine Woche vorher; Status-Hinweis |
+| R7 | **Auth-Password-Hash-Import scheitert** | mittel | hoch | Fallback B (Reset-Mail) vorbereitet, vorab mit 5 Test-Usern verifizieren |
+| R8 | **Domain-Transfer vom alten Registrar verzögert** | mittel | hoch | 14 Tage Vorlauf, AuthCode-Anforderung dokumentieren |
+| R9 | **Storage-URLs hartkodiert in DB-Rows** (alte Supabase-URLs) | mittel | mittel | vor 2.M.2: grep + UPDATE-Statement nach Migration |
+| R10 | **SMTP-Übergang Workspace-Wechsel** → Auth/Support-Mails fallen aus | hoch | hoch | Übergangs-SMTP (Resend / Mailgun) für 30 Tage; SPF/DKIM/DMARC sorgfältig |
+| R11 | **Mel-private Keys noch in Git-History** | hoch | sehr hoch (Datenleck) | 0.M.2 findet das; Keys rotieren VOR Repo-Transfer, alte revoken |
+| R12 | **gmail-Account einziger Identitäts-Anker, Bus-Faktor 1** | hoch | sehr hoch | 0.CW.2 = Recovery auf Christopher, Vault, beide haben Zugriff |
+| R13 | **Karten-Switch gannaca → Markmate verfrüht** → Service-Ausfall in alter Org | mittel | mittel | gannaca-Karte bei alten Orgs bis 30 Tage nach Cut-Over **drinlassen** |
+| R14 | **Stripe-Idempotency-Kollision** zwischen alten + neuen Events | niedrig | mittel | Webhook-Handler prüft `account`-Feld |
+| R15 | **Steuerlich: Übergang gannaca → Markmate als verdeckte Gewinnausschüttung** | mittel | hoch (juristisch) | Übernahme-Vereinbarung mit Steuerberater (1.MM.7) |
+| R16 | **`markmate.de` Domain wird zwischenzeitlich von Dritten registriert** | niedrig | mittel (Branding) | 0.CW.3 = jetzt sichern |
+| R17 | **OpenAI-Org-Owner-Wechsel** wird kompliziert (manche Dienste machen das schwer) | mittel | mittel | Alternative: neue Markmate-Org, alte Org parallel deaktivieren |
 
 ---
 
-## 8. Per-Dienst-Checklisten
+## §7 — Per-Dienst-Checklisten (komplett)
 
-### 8.1 GitHub
+### 7.1 Identitäts-Basis
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Markmate-Org angelegt | ☐ |
-| Plan ausgewählt (Team / Free) | ☐ |
-| Mel als temporärer Org-Admin, Moritz als Owner | ☐ |
-| Repo `korrekturpilot` von Mel-Privat zu Markmate-Org transferiert | ☐ |
-| Branches komplett da (`main`, Feature-Branches) | ☐ |
-| GitHub Actions / Secrets: ENV-Secrets neu setzen (falls verwendet) | ☐ |
-| Vercel-GitHub-Integration neu autorisiert (für Markmate-Org) | ☐ |
-| Codeowners / Branch-Protection neu konfiguriert | ☐ |
-| Webhooks (falls vorhanden) neu angelegt | ☐ |
-| Issue-Templates, Labels migriert | ☐ |
-| Mel als Admin nach Cut-Over+30 Tage entfernt | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Vault (1Password/Bitwarden) angelegt | 0 | ☐ |
+| `korrekturpilot@gmail.com` Recovery + 2FA auf Christopher | 0 | ☐ |
+| `markmate.de` Domain reserviert | 0 | ☐ |
+| `team@markmate.de` Postfach in Markmate-Workspace aktiv | 2 | ☐ |
 
-### 8.2 Supabase
+### 7.2 GitHub
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Markmate-Org angelegt | ☐ |
-| Neues Projekt `korrekturpilot-prod` in Region EU-Central angelegt | ☐ |
-| `pg_dump` (Schema + Daten) aus alter DB | ☐ |
-| Schema in neue DB eingespielt | ☐ |
-| RLS-Policies aktiv (verifiziert via Test-User) | ☐ |
-| Storage-Buckets identisch angelegt | ☐ |
-| Storage-Policies aus `006_create_storage_policies.sql` aktiv | ☐ |
-| Storage-Objekte kopiert (Count alt = Count neu) | ☐ |
-| Auth-Provider neu konfiguriert (Email, ggf. OAuth) | ☐ |
-| Auth-Email-Templates (Confirm, Magic-Link, Reset) aus altem Projekt repliziert | ☐ |
-| Auth-Redirect-URLs: Production-Domain `korrekturpilot.de/auth/callback` + Preview-Domains | ☐ |
-| SMTP für Auth-Mails konfiguriert (Markmate-Workspace oder Resend) | ☐ |
-| Auth-User importiert mit `password_hash` (Verifikation: Test-Login mit altem Passwort) | ☐ |
-| Service-Role-Key, Anon-Key, URL in Vercel-ENV gesetzt | ☐ |
-| Backups aktiviert (Daily) | ☐ |
-| Altes Projekt paused (nicht deleted) für ≥30 Tage | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Org angelegt | 2 | ☐ |
+| Repo `korrekturpilot` von Mel-Privat zu Markmate-Org transferiert | 2 | ☐ |
+| Vercel-GitHub-Integration neu autorisiert | 2 | ☐ |
+| GitHub-Actions / Secrets neu gesetzt (falls verwendet) | 2 | ☐ |
+| Branch-Protection neu konfiguriert | 2 | ☐ |
+| Mel als Admin nach 30 Tagen entfernt | 4 | ☐ |
 
-### 8.3 Vercel
+### 7.3 Supabase
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Markmate-Team angelegt (Pro-Plan) | ☐ |
-| Neues Projekt aus Markmate-GitHub-Repo verbunden | ☐ |
-| Alle 9 ENV-Variablen gesetzt (Production + Preview) | ☐ |
-| Build erfolgreich auf Preview | ☐ |
-| Custom Domain `korrekturpilot.de` hinzugefügt (vorab, DNS-Verifikation später) | ☐ |
-| `www.korrekturpilot.de` Redirect konfiguriert (falls genutzt) | ☐ |
-| Vercel-Logs gepflegt (Drain auf Datadog/Logtail falls vorhanden) | ☐ |
-| Edge-Funktionen / Cron-Jobs aus altem Projekt übernommen | ☐ |
-| Old Project nach Cut-Over paused, nicht deleted | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Org angelegt, Markmate-Karte | 2 | ☐ |
+| Neues Projekt `korrekturpilot-prod` (EU-Central) | 2 | ☐ |
+| `pg_dump`-Skript getestet | 0 | ☐ |
+| Schema in neue DB | 2 | ☐ |
+| RLS-Policies verifiziert (Test-User-Login) | 2 | ☐ |
+| Storage-Buckets + Policies repliziert | 2 | ☐ |
+| Storage-Objekte kopiert, Count alt = neu | 2 | ☐ |
+| Auth-Provider + SMTP konfiguriert | 2 | ☐ |
+| Auth-Email-Templates repliziert | 2 | ☐ |
+| Auth-Redirect-URLs gesetzt | 2 | ☐ |
+| Auth-User mit `password_hash` importiert | 2 | ☐ |
+| Service-Role-Key + Anon-Key + URL in Vercel | 2 | ☐ |
+| Daily-Backups aktiviert | 2 | ☐ |
+| Altes Projekt paused (nicht deleted) ≥ 30 Tage | 4 | ☐ |
 
-### 8.4 Stripe
+### 7.4 Vercel
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Markmate-Account angelegt | ☐ |
-| KYC-Daten eingereicht: HR-Auszug, GF-Ausweis, USt-ID, IBAN | ☐ |
-| KYC genehmigt (von Stripe) | ☐ |
-| Produkte angelegt (mind. „25er Paket", „Einzelkorrektur") | ☐ |
-| Preise angelegt → neue `price_xxx` IDs notiert | ☐ |
-| `STRIPE_SECRET_KEY` (live) in Vercel | ☐ |
-| `NEXT_PUBLIC_STRIPE_PRICE_ID_PACKAGE_25` neu in Vercel | ☐ |
-| `NEXT_PUBLIC_STRIPE_PRICE_ID_ONE_TIME` neu in Vercel | ☐ |
-| Webhook-Endpoint 1: `https://korrekturpilot.de/api/webhook` mit Events | ☐ |
-| Webhook-Endpoint 2: `https://korrekturpilot.de/api/webhooks/stripe` mit Events | ☐ |
-| Webhook-Endpoint 3: `https://korrekturpilot.de/api/stripe/webhook` mit Events | ☐ |
-| `STRIPE_WEBHOOK_SECRET` für alle drei in Vercel (ggf. einzeln, falls Code unterscheidet) | ☐ |
-| Customer-Portal konfiguriert (Cancellation, Branding, Logo) | ☐ |
-| Tax-Settings (DE 19% / EU-OSS) konfiguriert | ☐ |
-| Bestandskunden-Strategie entschieden (S1 / S2 / S3) und ausgeführt | ☐ |
-| Live-Test 1 € + sofortige Erstattung erfolgreich | ☐ |
-| Alter Stripe-Account: Webhooks disabled nach Cut-Over | ☐ |
-| Alter Stripe-Account: 30 Tage Frist, dann Daten archiviert (10 J. Buchhaltung!) | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Team (Pro-Plan) angelegt | 2 | ☐ |
+| Neues Projekt aus Markmate-GitHub-Repo | 2 | ☐ |
+| Alle 9 ENV-Variablen gesetzt (Prod + Preview) | 2 | ☐ |
+| Build erfolgreich auf Preview | 2 | ☐ |
+| Custom Domain `korrekturpilot.de` hinzugefügt | 2 | ☐ |
+| `www.korrekturpilot.de` Redirect (falls genutzt) | 2 | ☐ |
+| Edge-Funktionen / Cron-Jobs übernommen | 2 | ☐ |
+| Altes Projekt paused nach Cut-Over | 3 | ☐ |
 
-### 8.5 OpenAI
+### 7.5 Stripe
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Markmate-Organization in OpenAI angelegt | ☐ |
-| Karte hinterlegt, $50–100 Prepaid eingezahlt → Tier 2 | ☐ |
-| API-Key generiert | ☐ |
-| `OPENAI_API_KEY` in Vercel-ENV | ☐ |
-| Spending-Limit + Usage-Alert gesetzt | ☐ |
-| Test-Call gegen `/api/grade` erfolgreich auf Preview | ☐ |
-| Mel's alter Personal-Key revoked nach Cut-Over | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Account angelegt | 2 | ☐ |
+| KYC eingereicht (HR-Auszug, GF-Ausweis, USt-ID, IBAN) | 2 | ☐ |
+| KYC genehmigt | 2 | ☐ |
+| Produkte + Preise neu angelegt, IDs notiert | 2 | ☐ |
+| `STRIPE_SECRET_KEY` (live) in Vercel | 2 | ☐ |
+| Beide `NEXT_PUBLIC_STRIPE_PRICE_ID_*` in Vercel | 2 | ☐ |
+| Webhook-Endpoint `/api/webhook` mit Events | 2 | ☐ |
+| Webhook-Endpoint `/api/webhooks/stripe` mit Events | 2 | ☐ |
+| Webhook-Endpoint `/api/stripe/webhook` mit Events | 2 | ☐ |
+| `STRIPE_WEBHOOK_SECRET`(s) in Vercel | 2 | ☐ |
+| Customer-Portal + Branding konfiguriert | 2 | ☐ |
+| Tax-Settings (DE / EU-OSS) | 2 | ☐ |
+| Bestandskunden-Strategie entschieden (S2 default) | 2 | ☐ |
+| 1 € Live-Test mit Refund | 2/3 | ☐ |
+| Alter Stripe-Account: Webhooks disabled | 3 | ☐ |
+| Alter Stripe-Account: 10 J. archivieren (HGB) | 4 | ☐ |
 
-### 8.6 Google Gemini
+### 7.6 OpenAI
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Google Cloud Project unter Markmate-Workspace angelegt | ☐ |
-| Vertex AI / AI Studio API aktiviert | ☐ |
-| Billing-Konto verknüpft | ☐ |
-| API-Key generiert (oder Service-Account-JSON, je nach Setup) | ☐ |
-| `GOOGLE_AI_KEY` in Vercel | ☐ |
-| Test-Call gegen `/api/extract` (handgeschriebenes PDF) erfolgreich | ☐ |
-| Mel's alter Personal-Key revoked nach Cut-Over | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Org auf `team@markmate.de` | 2 | ☐ |
+| Markmate-Karte, $50–100 Prepaid → Tier 2 | 2 | ☐ |
+| Neuer API-Key generiert | 2 | ☐ |
+| `OPENAI_API_KEY` in Vercel (neu) | 2 | ☐ |
+| Spending-Limit + Usage-Alert | 2 | ☐ |
+| Test-Call gegen `/api/grade` auf Preview | 2 | ☐ |
+| Alte private/gannaca-Keys revoked | 3/4 | ☐ |
 
-### 8.7 Domain `korrekturpilot.de`
+### 7.7 Google Gemini
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Bei altem Registrar (gannaca): Whois unlock, AuthCode anfordern | ☐ |
-| Bei neuem Registrar (Markmate): Transfer-In gestartet, AuthCode eingegeben | ☐ |
-| Transfer-Bestätigungsmail im Markmate-Postfach beantwortet | ☐ |
-| 5–7 Tage Wartezeit | ☐ |
-| Domain-Status: bei Markmate-Registrar aktiv | ☐ |
-| Aus A7-Export: alle DNS-Records am neuen Registrar replizieren (A, AAAA, MX, TXT, DKIM, SPF, DMARC, CNAME `www`) | ☐ |
-| TTL aller Records auf 300s gesetzt (eine Woche vor Cut-Over) | ☐ |
-| A-Record / CNAME `@` zeigt am Cut-Over-Tag auf neue Vercel-Adresse | ☐ |
-| TTL nach erfolgreichem Cut-Over zurück auf 3600s | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| GCP-Projekt unter Markmate-Workspace | 2 | ☐ |
+| Vertex AI / AI Studio aktiviert | 2 | ☐ |
+| Markmate-Billing | 2 | ☐ |
+| API-Key (oder Service-Account-JSON) generiert | 2 | ☐ |
+| `GOOGLE_AI_KEY` in Vercel | 2 | ☐ |
+| Test-Call gegen `/api/extract` | 2 | ☐ |
+| Alte Keys revoked | 3/4 | ☐ |
 
-### 8.8 Google Workspace
+### 7.8 Domain `korrekturpilot.de`
 
-| Schritt | Status-Feld |
-|---------|-------------|
-| Markmate-Workspace auf `markmate.de` angelegt | ☐ |
-| Moritz als Admin, Mel als temporärer Super-Admin | ☐ |
-| Aliasdomain `korrekturpilot.de` hinzugefügt (geht erst nach Domain-Transfer abgeschlossen) | ☐ |
-| Postfächer aus alter Workspace migriert (Google Workspace Migration Tool) | ☐ |
-| `support@korrekturpilot.de` und andere Funktions-Adressen aktiv | ☐ |
-| MX-Records am neuen Registrar zeigen auf Google-Workspace-MX | ☐ |
-| SPF + DKIM + DMARC für `korrekturpilot.de` neu konfiguriert | ☐ |
-| Test: Mail an `support@korrekturpilot.de` kommt an | ☐ |
-| Code: `SMTP_USER` / `SMTP_PASS` (App-Password im neuen Workspace) in Vercel-ENV | ☐ |
-| Alte Workspace nach Cut-Over+30 Tage gekündigt | ☐ |
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| DNS-Zone exportiert (Zonefile) | 0 | ☐ |
+| Bei gannaca-Registrar: Whois-Unlock + AuthCode | 2 | ☐ |
+| Markmate-Registrar Account + Transfer-In | 2 | ☐ |
+| Bestätigungs-Mail beantwortet | 2 | ☐ |
+| Transfer 5–7 Tage Wartezeit | 2 | ☐ |
+| DNS-Records am Markmate-Registrar repliziert | 2 | ☐ |
+| TTL aller Records auf 300s | 2 | ☐ |
+| A-Record / CNAME `@` auf neue Vercel-Adresse (Cut-Over-Tag) | 3 | ☐ |
+| TTL zurück auf 3600s nach Cut-Over | 4 | ☐ |
+
+### 7.9 Google Workspace
+
+| Schritt | Phase | Status |
+|---------|-------|--------|
+| Markmate-Workspace auf `markmate.de` | 2 | ☐ |
+| `team@markmate.de` + Funktions-Aliasse | 2 | ☐ |
+| Aliasdomain `korrekturpilot.de` (nach Domain-Transfer) | 2 | ☐ |
+| Postfächer migriert (Workspace Migration Tool) | 2 | ☐ |
+| MX/SPF/DKIM/DMARC auf Markmate-Workspace | 3 | ☐ |
+| Test: Mail an `support@korrekturpilot.de` | 3 | ☐ |
+| SMTP-User/Pass in Vercel-ENV | 2 | ☐ |
+| Alte gannaca-Workspace nach 30 Tagen Aliasdomain entfernen | 4 | ☐ |
 
 ---
 
-## 9. Gesamt-Zeitschätzung
+## §8 — Gesamt-Zeitschätzung
 
-### 9.1 Aufgeschlüsselt
+### 8.1 Aufgeschlüsselt
 
 | Kategorie | Min | Max | Bemerkung |
 |-----------|-----|-----|-----------|
-| **[M] Mel-Solo (Vorarbeit + Cut-Over)** | 12 h | 22 h | inklusive Cut-Over-Tag |
-| **[CW] Co-Working live (Mel + Moritz)** | 7 h | 11 h | gestaffelt über mehrere Termine, idealerweise 2–3 Sessions |
-| **[MM] Markmate ohne Mel** | 5 h | 11 h | parallel zu A/B, eigene Pace |
-| **[W] Reine Wartezeit** | 2 Wochen | 6 Wochen | KYC + Domain-Transfer + GmbH-Eintrag dominieren |
-| **Cut-Over-Tag (sub)** | 2.5 h | 4 h | davon ≥1 h Moritz dabei |
+| **[M] Mel-Solo gesamt** (Phasen 0+2+3+4) | 16 h | 28 h | über 8–14 Wochen verteilt |
+| **[CW] Co-Working Mel + Christopher** | 9 h | 13 h | 4–5 Sessions à 1.5–3 h |
+| **[MM] Markmate ohne Mel** | 4 h | 8 h Arbeit | + 4–10 Wochen Wartezeit (GmbH-Gründung, Bankkonto, KYC) |
+| **[W] Reine Wartezeit** | 4 Wochen | 10 Wochen | dominiert durch Phase 1 |
+| **Cut-Over-Tag** | 2.5 h | 4 h | davon ≥ 1 h Christopher dabei |
 
-### 9.2 Kalendarisch realistisch
+### 8.2 Kalendarisch
 
-| Szenario | Kalenderzeit ab Start |
-|----------|------------------------|
-| **Best case** (Markmate-Setup vorab fertig, alle KYC sofort durch, Domain-Transfer reibungslos) | **2 Wochen** |
-| **Realistisch** | **3–4 Wochen** |
-| **Worst case** (KYC-Rückfragen, Notar-Verzögerung Gründung, Stripe-Support für S1) | **6–8 Wochen** |
+| Szenario | Dauer ab Start |
+|----------|----------------|
+| **Best case** (GmbH-Gründung in 4 Wochen, KYC sofort, alles glatt) | **8 Wochen** |
+| **Realistisch** | **10–12 Wochen** |
+| **Worst case** (GmbH-Eintrag dauert, KYC-Rückfragen, Stripe-Support nötig) | **14–18 Wochen** |
 
-### 9.3 Co-Working-Anteil separat (= Moritz' Kalender blocken)
+### 8.3 Christopher-Zeit isoliert
+
+Damit Christopher Termine blocken kann:
 
 | Session | Dauer | Inhalt |
 |---------|-------|--------|
-| Session 1 | 2–3 h | B2 Google Workspace, B3 team@-Mail, B4 GitHub, B5 Supabase, B6 Vercel, B10 Registrar, B15 2FA für alle |
-| Session 2 | 2–3 h | B7 OpenAI, B8 Gemini, B9 Stripe-Anlage, B11 Repo-Transfer, B12 Vercel-Domain |
-| Session 3 | 1–2 h | B13 Stripe-Webhooks, B14 Stripe-Test, B16 Domain-Transfer einleiten |
-| Session 4 (Cut-Over-Tag) | 1–2 h | B18 Live-Switch, Stripe-Live-Test, ggf. 2FA |
-| **Summe Moritz' Zeit** | **6–10 h** | über ~3–4 Wochen verteilt |
+| Session 0 (Phase 0) | ~2 h | Vault, gmail-Zugang, Markmate-Domain reservieren, Mel-Keys rotieren |
+| Session 1 (Phase 2, nach Bankkarte) | 2–3 h | Workspace, GitHub-Org, Supabase-Org, Vercel-Team, Registrar |
+| Session 2 (Phase 2) | 2–3 h | OpenAI, Gemini, Stripe-Anlage + KYC, Repo-Transfer |
+| Session 3 (Phase 2, nach KYC) | 1–2 h | Stripe-Webhooks, Stripe-Test, Domain-Transfer einleiten |
+| Session 4 (Cut-Over-Tag) | 1–2 h | Live-Switch, Stripe-Live-Test |
+| **Summe** | **8–12 h** | über 10–12 Wochen verteilt |
 
 ---
 
-## 10. Übergabe-Output für Moritz (nach Cut-Over)
+## §9 — Definition of Done
 
-Nicht-technisches Dokument für Moritz (separat von diesem Plan), das Mel am Cut-Over-Tag abschließt:
+Migration abgeschlossen, wenn:
 
-- 1Password-Vault „Markmate-Produktion" mit allen Zugängen + Recovery-Codes
-- Liste der Monatskosten pro Dienst (geschätzt)
-- Wer wann was bei Problemen tut: Vercel-Status, Supabase-Status, Stripe-Webhook-Dashboard
-- Notfall-Rollback-Anleitung (für ≥30 Tage, solange alte Systeme paused sind)
-- Kontakt eines technischen Dienstleisters (falls Moritz allein nicht fortfahren kann)
-
----
-
-## 11. Definition of Done
-
-Migration ist abgeschlossen, wenn alle folgenden Punkte ✅:
-
-1. `korrekturpilot.de` löst auf neue Vercel-IP auf (alle DNS-Resolver weltweit)
-2. Test-User-Login mit alten Credentials funktioniert (ohne Reset)
-3. Test-Upload + Korrektur durchläuft End-to-End auf neuer Infra
-4. Stripe-Live-Checkout erzeugt Customer + Webhook + Credits-Gutschrift
-5. Support-Mail kommt an `support@korrekturpilot.de` an
-6. Impressum/AGB/Datenschutz nennen Markmate GmbH
-7. Mel ist aus keinem Markmate-Account mehr als Admin gelistet (nach 30 Tagen)
-8. Alte gannaca-Services sind paused (nicht deleted) — Anker für 30-Tage-Rollback
-9. Übernahme-Vereinbarung gannaca↔Markmate ist unterzeichnet
-10. Moritz hat Vault + Übergabe-Doku
+1. `korrekturpilot.de` löst auf neue (Markmate-Vercel) IP auf, weltweit propagiert.
+2. Test-User-Login mit altem Passwort funktioniert.
+3. End-to-End-Test (Upload → Korrektur → PDF-Export) auf neuer Infra grün.
+4. Stripe-Live-Checkout erzeugt Customer + Webhook + Credits.
+5. Support-Mail an `support@korrekturpilot.de` kommt an.
+6. Impressum / AGB / DP nennen Markmate GmbH.
+7. Alle 9 Markmate-Accounts (GitHub, Vercel, Supabase, Stripe, OpenAI, Gemini, Registrar, Workspace, Vault) gehören Markmate, gannaca-Karte überall ersetzt.
+8. Mel ist aus keinem Markmate-Account mehr als Admin (nach 30 Tagen).
+9. Alte gannaca-Systeme paused (nicht deleted) — 30-Tage-Rollback-Anker.
+10. Übernahme-Vereinbarung gannaca ↔ Markmate unterzeichnet, Steuerberater eingebunden.
+11. Christopher hat Vault + nicht-techn. Übergabe-Doku + Notfall-Runbook.
